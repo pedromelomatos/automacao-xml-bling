@@ -1,8 +1,8 @@
 # Automação de XML de NF-e do Bling
 
-Este é um projeto real, desenvolvido para ser utilizado em produção na empresa onde trabalho e atender uma necessidade operacional diária.
-
 Automação em Python para consultar as NF-e emitidas no Bling, baixar os XMLs autorizados e organizá-los em pastas por unidade, marketplace, data de emissão e UF de destino.
+
+Este é um projeto real, desenvolvido para ser utilizado em produção na empresa onde trabalho e atender uma necessidade operacional diária.
 
 O projeto pode operar em uma máquina Windows dedicada ou em um contêiner Docker. Nos dois modos, a execução diária ocorre às **14h10**, considerando a janela encerrada às **14h**.
 
