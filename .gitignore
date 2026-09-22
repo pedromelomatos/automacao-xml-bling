@@ -1,0 +1,80 @@
+# Credenciais e tokens (nunca enviar ao GitHub)
+**/.env
+**/.env.*
+!**/.env.example
+**/tokens.json
+**/tokens*.json
+/configuracao.json
+
+# Dados gerados pela automacao
+/dados/
+/logs/
+/xml/
+/xml_originais/
+/xml_por_cnpj/
+/xml_por_marketplace/
+/xml_teste/
+*.log
+estado_execucao.json
+.executor_diario.lock
+
+# Segredos locais; preserva somente o aviso sem credenciais
+/segredos/*
+!/segredos/COLOQUE O TOKENS AQUI.txt
+
+# Pacotes e instaladores gerados ou baixados
+/Pacote-Automacao-XML-Bling-Organizado/
+/Pacote-Automacao-XML-Bling*.zip
+/python-*-amd64.exe
+/build/
+/dist/
+*.spec
+
+# Utilitarios locais de diagnostico e testes manuais
+/diagnosticar_filtro_data.py
+/testar_auth.py
+/testar_download_xml.py
+/testar_nfe.py
+/testar_nfe_dia.py
+/testar_refresh.py
+
+# Instrucoes locais redundantes com o README principal
+/LEIA-ME - DOCKER.txt
+/LEIA-ME - ESCOLHA A INSTALACAO.txt
+/LEIA-ME - INSTALACAO.txt
+
+# Repositorio Git aninhado criado localmente por engano
+/automacao-xml-bling/
+
+# Arquivos temporarios e backups
+*.tmp
+*.bak
+*.swp
+*~
+.coverage.*
+
+# Chaves e certificados privados
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Cache e ambientes Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Arquivos de editores e do sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

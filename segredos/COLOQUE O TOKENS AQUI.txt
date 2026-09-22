@@ -1,0 +1,1 @@
+Copie tokens.json para esta pasta antes de iniciar o contêiner.

@@ -1,0 +1,12 @@
+*
+!.dockerignore
+!Dockerfile
+!requirements.txt
+!dependencias_docker/
+!dependencias_docker/*.whl
+!baixar_xmls.py
+!bling_auth.py
+!organizar_xmls.py
+!executar_diario.py
+!agendador_docker.py
+!configuracao.json
