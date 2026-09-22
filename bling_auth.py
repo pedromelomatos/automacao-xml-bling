@@ -7,13 +7,15 @@ import requests
 from dotenv import load_dotenv
 
 
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent
+ENV_FILE = Path(os.getenv("AUTOMACAO_ENV_FILE", BASE_DIR / ".env"))
+load_dotenv(ENV_FILE)
 
 CLIENT_ID = os.getenv("BLING_CLIENT_ID")
 CLIENT_SECRET = os.getenv("BLING_CLIENT_SECRET")
 
 TOKEN_URL = "https://api.bling.com.br/Api/v3/oauth/token"
-TOKENS_FILE = Path(os.getenv("BLING_TOKENS_FILE", "tokens.json"))
+TOKENS_FILE = Path(os.getenv("BLING_TOKENS_FILE", BASE_DIR / "tokens.json"))
 
 
 def carregar_tokens():
@@ -36,6 +38,7 @@ def salvar_tokens(tokens):
         "obtained_at": int(time.time()),
     }
 
+    TOKENS_FILE.parent.mkdir(parents=True, exist_ok=True)
     temporario = TOKENS_FILE.with_suffix(".tmp")
 
     with temporario.open("w", encoding="utf-8") as arquivo:

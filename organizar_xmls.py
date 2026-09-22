@@ -27,7 +27,7 @@ def obter_pasta_dados():
 
 
 DATA_DIR = obter_pasta_dados()
-CONFIG_FILE = BASE_DIR / "configuracao.json"
+CONFIG_FILE = Path(os.getenv("AUTOMACAO_CONFIG_FILE", BASE_DIR / "configuracao.json"))
 PASTA_ORGANIZADOS = DATA_DIR / "xml_por_cnpj"
 
 
@@ -182,7 +182,13 @@ def copiar_sem_sobrescrever(origem, destino):
     return True
 
 
-def organizar_xml(caminho_xml, nota=None, pasta_saida=PASTA_ORGANIZADOS, configuracao=None):
+def organizar_xml(
+    caminho_xml,
+    nota=None,
+    pasta_saida=PASTA_ORGANIZADOS,
+    configuracao=None,
+    incluir_gnre=True,
+):
     caminho_xml = Path(caminho_xml)
     configuracao = configuracao or carregar_configuracao()
     metadados = obter_metadados_xml(caminho_xml)
@@ -212,38 +218,31 @@ def organizar_xml(caminho_xml, nota=None, pasta_saida=PASTA_ORGANIZADOS, configu
     
     destinos = [destino_principal]
 
-    #pegando GNRE no .config
-    ufs_gnre_configuradas = configuracao["gnre_ufs_por_unidade"].get(unidade) 
+    if incluir_gnre:
+        ufs_gnre_configuradas = configuracao["gnre_ufs_por_unidade"].get(unidade)
+        if not isinstance(ufs_gnre_configuradas, list):
+            raise RuntimeError(
+                f"Regras de GNRE ausentes para a unidade '{unidade}' em "
+                f"{CONFIG_FILE.name}."
+            )
 
-    #se a unidade não tem regra de gnre não está presente nas .config
-    if not isinstance(ufs_gnre_configuradas, list):
-        raise RuntimeError(
-            f"Regras de GNRE ausentes para a unidade '{unidade}' em "
-            f"{CONFIG_FILE.name}."
-        )
+        ufs_gnre = {
+            str(uf).strip().upper()
+            for uf in ufs_gnre_configuradas
+            if str(uf).strip()
+        }
 
-
-    #limpando o texto da UF
-    ufs_gnre = {
-        str(uf).strip().upper()
-        for uf in ufs_gnre_configuradas
-        if str(uf).strip()
-    }
-
-    if metadados["uf_destino"] in ufs_gnre: # se a uf tiver nas da gnre
-        #monta a cópia adicional: Unidade/Marketplace/GNRE/Data/UF/XML.
-        destino_gnre = (
-            Path(pasta_saida)
-            / unidade_pasta
-            / marketplace_pasta
-            / "GNRE"
-            / metadados["data_emissao"]
-            / uf_pasta
-            / nome_arquivo
-        )
-
-        # acrescentando o destino da gnre
-        destinos.append(destino_gnre)
+        if metadados["uf_destino"] in ufs_gnre:
+            destino_gnre = (
+                Path(pasta_saida)
+                / unidade_pasta
+                / marketplace_pasta
+                / "GNRE"
+                / metadados["data_emissao"]
+                / uf_pasta
+                / nome_arquivo
+            )
+            destinos.append(destino_gnre)
 
     destinos = tuple(destinos)
 

@@ -4,13 +4,16 @@ import secrets
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 from dotenv import load_dotenv
 
 
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent
+ENV_FILE = Path(os.getenv("AUTOMACAO_ENV_FILE", BASE_DIR / ".env"))
+load_dotenv(ENV_FILE)
 
 CLIENT_ID = os.getenv("BLING_CLIENT_ID")
 CLIENT_SECRET = os.getenv("BLING_CLIENT_SECRET")
@@ -19,17 +22,21 @@ REDIRECT_URI = os.getenv("BLING_REDIRECT_URI")
 AUTH_URL = "https://www.bling.com.br/Api/v3/oauth/authorize"
 TOKEN_URL = "https://api.bling.com.br/Api/v3/oauth/token"
 
-TOKENS_FILE = "tokens.json"
+TOKENS_FILE = Path(os.getenv("BLING_TOKENS_FILE", BASE_DIR / "tokens.json"))
 
 
-if not CLIENT_ID:
-    raise RuntimeError("BLING_CLIENT_ID não encontrado no .env")
-
-if not CLIENT_SECRET:
-    raise RuntimeError("BLING_CLIENT_SECRET não encontrado no .env")
-
-if not REDIRECT_URI:
-    raise RuntimeError("BLING_REDIRECT_URI não encontrado no .env")
+def validar_configuracao():
+    ausentes = []
+    if not CLIENT_ID:
+        ausentes.append("BLING_CLIENT_ID")
+    if not CLIENT_SECRET:
+        ausentes.append("BLING_CLIENT_SECRET")
+    if not REDIRECT_URI:
+        ausentes.append("BLING_REDIRECT_URI")
+    if ausentes:
+        raise RuntimeError(
+            f"Campos ausentes em {ENV_FILE.name}: {', '.join(ausentes)}."
+        )
 
 
 state_esperado = secrets.token_urlsafe(32)
@@ -96,6 +103,8 @@ class CallbackHandler(BaseHTTPRequestHandler):
 
 
 def obter_codigo_autorizacao():
+    global state_esperado
+    state_esperado = secrets.token_urlsafe(32)
     parametros = {
         "response_type": "code",
         "client_id": CLIENT_ID,
@@ -110,6 +119,7 @@ def obter_codigo_autorizacao():
     port = parsed_redirect.port or 8000
 
     servidor = HTTPServer((host, port), CallbackHandler)
+    servidor.timeout = 300
 
     print("Servidor local iniciado.")
     print("Abrindo página de autorização do Bling...")
@@ -170,7 +180,8 @@ def salvar_tokens(tokens):
         "obtained_at": int(time.time()),
     }
 
-    with open(TOKENS_FILE, "w", encoding="utf-8") as arquivo:
+    TOKENS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with TOKENS_FILE.open("w", encoding="utf-8") as arquivo:
         json.dump(dados, arquivo, indent=4)
 
     print(f"Tokens salvos com sucesso em {TOKENS_FILE}.")
@@ -178,6 +189,8 @@ def salvar_tokens(tokens):
 
 
 def main():
+    validar_configuracao()
+    resultado_callback.clear()
     print("=" * 60)
     print("AUTENTICAÇÃO BLING")
     print("=" * 60)
@@ -193,6 +206,7 @@ def main():
     print()
     print("FASE 1 CONCLUÍDA")
     print("OAuth realizado com sucesso.")
+    return TOKENS_FILE
 
 
 if __name__ == "__main__":

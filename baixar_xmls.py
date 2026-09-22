@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import time
+from dataclasses import dataclass
 from datetime import date, datetime, time as horario, timedelta
 from pathlib import Path
 from xml.etree import ElementTree
@@ -56,6 +57,11 @@ def obter_argumentos():
         action="store_true",
         help="modo de teste: encerra a janela no horário atual se ainda não forem 14h",
     )
+    parser.add_argument(
+        "--sem-gnre",
+        action="store_true",
+        help="organiza as NF-e sem criar as cópias adicionais na pasta GNRE",
+    )
     return parser.parse_args()
 
 
@@ -86,20 +92,44 @@ def calcular_periodo(data_consulta, janela_14h, ate_agora=False, agora=None):
     )
 
 
-def configurar_log(data_consulta, janela_14h=False):
+def configurar_log(data_consulta, janela_14h=False, handler_adicional=None):
     pasta_logs = DATA_DIR / "logs"
     pasta_logs.mkdir(parents=True, exist_ok=True)
     sufixo = "_14h" if janela_14h else ""
     arquivo_log = pasta_logs / f"automacao_{data_consulta.isoformat()}{sufixo}.log"
+    handlers = [
+        logging.FileHandler(arquivo_log, encoding="utf-8"),
+        logging.StreamHandler(),
+    ]
+    if handler_adicional is not None:
+        handlers.append(handler_adicional)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(message)s",
-        handlers=[
-            logging.FileHandler(arquivo_log, encoding="utf-8"),
-            logging.StreamHandler(),
-        ],
+        handlers=handlers,
+        force=True,
     )
     return arquivo_log
+
+
+@dataclass(frozen=True)
+class ResultadoDownload:
+    data_consulta: date
+    pasta_destino: Path
+    pasta_organizada: Path
+    arquivo_log: Path
+    total_notas: int
+    baixados: int
+    existentes: int
+    sem_chave: int
+    erros: int
+    organizados: int
+    organizacao_existente: int
+    erros_organizacao: int
+
+    @property
+    def codigo_saida(self):
+        return 1 if self.erros or self.sem_chave or self.erros_organizacao else 0
 
 
 class ClienteBling:
@@ -245,19 +275,23 @@ def extrair_xml(resposta):
     return conteudo
 
 
-def main():
-    argumentos = obter_argumentos()
-    data_consulta = argumentos.data
+def processar_download(
+    data_consulta,
+    janela_14h=False,
+    ate_agora=False,
+    incluir_gnre=True,
+    handler_log=None,
+):
     inicio, fim = calcular_periodo(
         data_consulta,
-        argumentos.janela_14h,
-        argumentos.ate_agora,
+        janela_14h,
+        ate_agora,
     )
     os.chdir(BASE_DIR)  # bling_auth.py localiza tokens.json pela pasta atual.
-    arquivo_log = configurar_log(data_consulta, argumentos.janela_14h)
+    arquivo_log = configurar_log(data_consulta, janela_14h, handler_log)
     pasta_destino = (
         DATA_DIR
-        / ("xml_originais" if argumentos.janela_14h else "xml")
+        / ("xml_originais" if janela_14h else "xml")
         / data_consulta.strftime("%d-%m-%Y")
     )
     pasta_destino.mkdir(parents=True, exist_ok=True)
@@ -267,7 +301,7 @@ def main():
     try:
         notas = consultar_nfes(cliente, inicio, fim)
         logging.info("NF-e retornadas pela consulta: %s", len(notas))
-        if argumentos.janela_14h:
+        if janela_14h:
             notas, fora_do_escopo, datas_invalidas = filtrar_emitidas_na_janela(
                 notas, inicio, fim
             )
@@ -308,12 +342,13 @@ def main():
                     logging.error("[%s/%s] NF-e %s: falha no download: %s", indice, len(notas), numero, erro)
                     continue
 
-            if argumentos.janela_14h:
+            if janela_14h:
                 try:
                     resultado = organizar_xml(
                         caminho,
                         nota=nota,
                         configuracao=configuracao,
+                        incluir_gnre=incluir_gnre,
                     )
                     organizados += resultado.novos
                     organizacao_existente += resultado.existentes
@@ -327,15 +362,39 @@ def main():
             "Finalizado | NF-e: %s | baixados: %s | existentes: %s | sem chave válida: %s | erros: %s",
             len(notas), baixados, existentes, sem_chave, erros,
         )
-        if argumentos.janela_14h:
+        if janela_14h:
             logging.info(
                 "Organização | cópias criadas: %s | cópias existentes: %s | erros: %s",
                 organizados, organizacao_existente, erros_organizacao,
             )
         logging.info("XMLs: %s | Log: %s", pasta_destino, arquivo_log)
-        return 1 if erros or sem_chave or erros_organizacao else 0
+        return ResultadoDownload(
+            data_consulta=data_consulta,
+            pasta_destino=pasta_destino,
+            pasta_organizada=DATA_DIR / "xml_por_cnpj",
+            arquivo_log=arquivo_log,
+            total_notas=len(notas),
+            baixados=baixados,
+            existentes=existentes,
+            sem_chave=sem_chave,
+            erros=erros,
+            organizados=organizados,
+            organizacao_existente=organizacao_existente,
+            erros_organizacao=erros_organizacao,
+        )
     finally:
         cliente.close()
+
+
+def main():
+    argumentos = obter_argumentos()
+    resultado = processar_download(
+        argumentos.data,
+        janela_14h=argumentos.janela_14h,
+        ate_agora=argumentos.ate_agora,
+        incluir_gnre=not argumentos.sem_gnre,
+    )
+    return resultado.codigo_saida
 
 
 if __name__ == "__main__":

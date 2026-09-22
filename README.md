@@ -171,6 +171,37 @@ python executar_diario.py --primeira-data 2026-09-01
 
 `--primeira-data` só é aceito antes da criação de `estado_execucao.json`.
 
+## Aplicativo com interface
+
+O arquivo `app_desktop.py` oferece uma interface para uso manual no Windows. Nela é
+possível conectar o computador ao Bling, selecionar a data da janela e escolher entre:
+
+- NF-e organizadas sem cópias na pasta GNRE;
+- NF-e organizadas com as cópias adicionais na pasta GNRE.
+
+Para testar a interface pelo código-fonte:
+
+```powershell
+py -3.14 app_desktop.py
+```
+
+Para gerar o executável, instale o PyInstaller e execute o script de compilação:
+
+```powershell
+py -3.14 -m pip install pyinstaller
+.\compilar_aplicativo.ps1
+```
+
+O pacote é criado em `dist/Entrega-Automacao-XML-Bling`. Por segurança, ele nunca
+inclui `tokens.json`. No computador de destino, coloque `.env` e
+`configuracao.json` ao lado do executável e use o botão **Conectar ao Bling** na
+primeira abertura. A opção `-IncluirConfiguracaoLocal` copia os dois arquivos de
+configuração para a entrega, mas deve ser usada somente quando o pacote for enviado
+por um meio seguro.
+
+No executável, os tokens ficam em `%LOCALAPPDATA%\Automacao XML Bling` e os XMLs,
+logs e resultados ficam em `Documentos\Automacao XML Bling`.
+
 ## Logs e acompanhamento
 
 Os principais arquivos de acompanhamento são:
