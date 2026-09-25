@@ -178,6 +178,13 @@ possível conectar o computador ao Bling, selecionar a data da janela e escolher
 
 - NF-e organizadas sem cópias na pasta GNRE;
 - NF-e organizadas com as cópias adicionais na pasta GNRE.
+- somente as GNRE em arquivos ZIP separados por unidade.
+
+No modo de ZIP, os arquivos são criados em `Documentos\Automacao XML
+Bling\GNRE - ZIP`, com nomes como `Matriz DD-MM-AAAA.zip` e `Filial
+DD-MM-AAAA.zip`. Dentro de cada ZIP, os XMLs ficam separados por marketplace e
+UF. Esse modo não cria a cópia principal das NF-e na estrutura organizada; os
+XMLs originais continuam preservados.
 
 Para testar a interface pelo código-fonte:
 

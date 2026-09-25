@@ -46,7 +46,13 @@ def criar_xml(caminho, cnpj_emitente, uf_destino):
 
 
 class OrganizacaoGnreTests(unittest.TestCase):
-    def organizar(self, cnpj_emitente, uf_destino):
+    def organizar(
+        self,
+        cnpj_emitente,
+        uf_destino,
+        incluir_gnre=True,
+        somente_gnre=False,
+    ):
         temporario = tempfile.TemporaryDirectory()
         self.addCleanup(temporario.cleanup)
         raiz = Path(temporario.name)
@@ -58,6 +64,8 @@ class OrganizacaoGnreTests(unittest.TestCase):
             nota={"loja": {"id": 1}},
             pasta_saida=saida,
             configuracao=CONFIGURACAO,
+            incluir_gnre=incluir_gnre,
+            somente_gnre=somente_gnre,
         )
         return resultado
 
@@ -95,6 +103,32 @@ class OrganizacaoGnreTests(unittest.TestCase):
             resultado.destinos[1].parts[-6:-3],
             ("Filial", "Marketplace Teste", "GNRE"),
         )
+
+    def test_opcao_sem_gnre_cria_somente_a_copia_principal(self):
+        resultado = self.organizar(
+            "11111111111111", "CE", incluir_gnre=False
+        )
+
+        self.assertEqual(resultado.novos, 1)
+        self.assertEqual(len(resultado.destinos), 1)
+        self.assertNotIn("GNRE", resultado.destinos[0].parts)
+
+    def test_somente_gnre_nao_cria_a_copia_principal(self):
+        resultado = self.organizar(
+            "11111111111111", "CE", somente_gnre=True
+        )
+
+        self.assertEqual(resultado.novos, 1)
+        self.assertEqual(len(resultado.destinos), 1)
+        self.assertIn("GNRE", resultado.destinos[0].parts)
+
+    def test_somente_gnre_ignora_uf_sem_regra(self):
+        resultado = self.organizar(
+            "11111111111111", "BA", somente_gnre=True
+        )
+
+        self.assertEqual(resultado.novos, 0)
+        self.assertEqual(resultado.destinos, ())
 
 
 if __name__ == "__main__":

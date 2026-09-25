@@ -8,15 +8,22 @@ import logging
 import os
 import sys
 import time
+import zipfile
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, time as horario, timedelta
 from pathlib import Path
+from pathlib import PurePosixPath
 from xml.etree import ElementTree
 
 import requests
 
 from bling_auth import obter_access_token
-from organizar_xmls import carregar_configuracao, organizar_xml
+from organizar_xmls import (
+    carregar_configuracao,
+    limpar_componente_pasta,
+    organizar_xml,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -61,6 +68,11 @@ def obter_argumentos():
         "--sem-gnre",
         action="store_true",
         help="organiza as NF-e sem criar as cópias adicionais na pasta GNRE",
+    )
+    parser.add_argument(
+        "--somente-gnre-zip",
+        action="store_true",
+        help="gera somente as GNRE em um arquivo ZIP por unidade",
     )
     return parser.parse_args()
 
@@ -126,10 +138,74 @@ class ResultadoDownload:
     organizados: int
     organizacao_existente: int
     erros_organizacao: int
+    arquivos_zip_gnre: tuple[Path, ...]
+    gnres_no_zip: int
+    somente_gnre_zip: bool
 
     @property
     def codigo_saida(self):
         return 1 if self.erros or self.sem_chave or self.erros_organizacao else 0
+
+    @property
+    def pasta_resultado(self):
+        if self.arquivos_zip_gnre:
+            return self.arquivos_zip_gnre[0].parent
+        return self.pasta_organizada
+
+
+def criar_zips_gnre(registros, data_consulta, pasta_saida=None):
+    """Cria um ZIP por unidade com os XMLs de GNRE selecionados."""
+    pasta_saida = Path(pasta_saida or (DATA_DIR / "GNRE - ZIP"))
+    por_unidade = defaultdict(list)
+    for unidade, marketplace, uf_destino, caminho_xml in registros:
+        por_unidade[unidade].append(
+            (marketplace, uf_destino, Path(caminho_xml))
+        )
+
+    if not por_unidade:
+        return ()
+
+    pasta_saida.mkdir(parents=True, exist_ok=True)
+    arquivos_zip = []
+    sufixo_data = data_consulta.strftime("%d-%m-%Y")
+
+    for unidade, arquivos in sorted(por_unidade.items()):
+        nome_unidade = limpar_componente_pasta(unidade)
+        caminho_zip = pasta_saida / f"{nome_unidade} {sufixo_data}.zip"
+        temporario = caminho_zip.with_suffix(".zip.tmp")
+        nomes_incluidos = set()
+        try:
+            with zipfile.ZipFile(
+                temporario,
+                mode="w",
+                compression=zipfile.ZIP_DEFLATED,
+                compresslevel=9,
+            ) as arquivo_zip:
+                for marketplace, uf_destino, caminho_xml in sorted(
+                    arquivos,
+                    key=lambda item: (
+                        str(item[0]),
+                        str(item[1]),
+                        item[2].name,
+                    ),
+                ):
+                    nome_interno = str(
+                        PurePosixPath(
+                            limpar_componente_pasta(marketplace),
+                            limpar_componente_pasta(uf_destino),
+                            caminho_xml.name,
+                        )
+                    )
+                    if nome_interno in nomes_incluidos:
+                        continue
+                    arquivo_zip.write(caminho_xml, arcname=nome_interno)
+                    nomes_incluidos.add(nome_interno)
+            temporario.replace(caminho_zip)
+        finally:
+            temporario.unlink(missing_ok=True)
+        arquivos_zip.append(caminho_zip)
+
+    return tuple(arquivos_zip)
 
 
 class ClienteBling:
@@ -280,6 +356,7 @@ def processar_download(
     janela_14h=False,
     ate_agora=False,
     incluir_gnre=True,
+    somente_gnre_zip=False,
     handler_log=None,
 ):
     inicio, fim = calcular_periodo(
@@ -315,6 +392,7 @@ def processar_download(
         erros = datas_invalidas
         organizados = organizacao_existente = erros_organizacao = 0
         chaves_vistas = set()
+        registros_gnre = []
         configuracao = carregar_configuracao()
 
         for indice, nota in enumerate(notas, start=1):
@@ -348,15 +426,32 @@ def processar_download(
                         caminho,
                         nota=nota,
                         configuracao=configuracao,
-                        incluir_gnre=incluir_gnre,
+                        incluir_gnre=incluir_gnre or somente_gnre_zip,
+                        somente_gnre=somente_gnre_zip,
                     )
                     organizados += resultado.novos
                     organizacao_existente += resultado.existentes
+                    if somente_gnre_zip:
+                        for destino in resultado.destinos:
+                            registros_gnre.append(
+                                (
+                                    resultado.unidade,
+                                    resultado.marketplace,
+                                    resultado.uf_destino,
+                                    destino,
+                                )
+                            )
                     if resultado.aviso:
                         logging.warning("NF-e %s: %s.", numero, resultado.aviso)
                 except (OSError, RuntimeError) as erro:
                     erros_organizacao += 1
                     logging.error("NF-e %s: falha na organização: %s", numero, erro)
+
+        arquivos_zip_gnre = (
+            criar_zips_gnre(registros_gnre, data_consulta)
+            if somente_gnre_zip
+            else ()
+        )
 
         logging.info(
             "Finalizado | NF-e: %s | baixados: %s | existentes: %s | sem chave válida: %s | erros: %s",
@@ -367,6 +462,15 @@ def processar_download(
                 "Organização | cópias criadas: %s | cópias existentes: %s | erros: %s",
                 organizados, organizacao_existente, erros_organizacao,
             )
+        if somente_gnre_zip:
+            if arquivos_zip_gnre:
+                logging.info(
+                    "GNRE | XMLs incluídos: %s | ZIPs: %s",
+                    len(registros_gnre),
+                    ", ".join(str(caminho) for caminho in arquivos_zip_gnre),
+                )
+            else:
+                logging.info("GNRE | Nenhum XML elegível para a data selecionada.")
         logging.info("XMLs: %s | Log: %s", pasta_destino, arquivo_log)
         return ResultadoDownload(
             data_consulta=data_consulta,
@@ -381,6 +485,9 @@ def processar_download(
             organizados=organizados,
             organizacao_existente=organizacao_existente,
             erros_organizacao=erros_organizacao,
+            arquivos_zip_gnre=arquivos_zip_gnre,
+            gnres_no_zip=len(registros_gnre),
+            somente_gnre_zip=somente_gnre_zip,
         )
     finally:
         cliente.close()
@@ -388,11 +495,13 @@ def processar_download(
 
 def main():
     argumentos = obter_argumentos()
+    janela_14h = argumentos.janela_14h or argumentos.somente_gnre_zip
     resultado = processar_download(
         argumentos.data,
-        janela_14h=argumentos.janela_14h,
+        janela_14h=janela_14h,
         ate_agora=argumentos.ate_agora,
         incluir_gnre=not argumentos.sem_gnre,
+        somente_gnre_zip=argumentos.somente_gnre_zip,
     )
     return resultado.codigo_saida
 

@@ -37,19 +37,20 @@ estado_execucao.json
 /testar_nfe.py
 /testar_nfe_dia.py
 /testar_refresh.py
+/test_app_desktop.py
+/test_organizar_xmls.py
 
 # Instrucoes locais redundantes com o README principal
 /LEIA-ME - DOCKER.txt
 /LEIA-ME - ESCOLHA A INSTALACAO.txt
 /LEIA-ME - INSTALACAO.txt
-
-# Repositorio Git aninhado criado localmente por engano
-/automacao-xml-bling/
+/INSTRUCOES_APLICATIVO.txt
 
 # Arquivos temporarios e backups
 *.tmp
 *.bak
 *.swp
+*.svg
 *~
 .coverage.*
 

@@ -202,6 +202,12 @@ class Aplicacao(tk.Tk):
             variable=self.modo_var,
             value="sem_gnre",
         ).pack(anchor="w", pady=2)
+        ttk.Radiobutton(
+            radios,
+            text="Somente GNRE em ZIP (um arquivo por unidade)",
+            variable=self.modo_var,
+            value="somente_gnre_zip",
+        ).pack(anchor="w", pady=2)
 
         acoes = ttk.Frame(opcoes, style="Card.TFrame")
         acoes.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(18, 0))
@@ -318,20 +324,28 @@ class Aplicacao(tk.Tk):
         self._registrar(
             f"Iniciando a janela {data_selecionada.strftime('%d/%m/%Y')}..."
         )
-        incluir_gnre = self.modo_var.get() == "com_gnre"
+        modo = self.modo_var.get()
+        incluir_gnre = modo == "com_gnre"
+        somente_gnre_zip = modo == "somente_gnre_zip"
         threading.Thread(
             target=self._trabalho_download,
-            args=(data_selecionada, incluir_gnre),
+            args=(data_selecionada, incluir_gnre, somente_gnre_zip),
             daemon=True,
         ).start()
 
-    def _trabalho_download(self, data_selecionada, incluir_gnre):
+    def _trabalho_download(
+        self,
+        data_selecionada,
+        incluir_gnre,
+        somente_gnre_zip,
+    ):
         try:
             handler = HandlerFila(self.fila)
             resultado = processar_download(
                 data_selecionada,
                 janela_14h=True,
                 incluir_gnre=incluir_gnre,
+                somente_gnre_zip=somente_gnre_zip,
                 handler_log=handler,
             )
             self.fila.put(("resultado", resultado))
@@ -362,6 +376,17 @@ class Aplicacao(tk.Tk):
                         f"XMLs que já existiam: {valor.existentes}\n"
                         f"Erros: {valor.erros + valor.erros_organizacao}"
                     )
+                    if valor.arquivos_zip_gnre:
+                        resumo += (
+                            f"\nGNRE incluídas nos ZIPs: {valor.gnres_no_zip}\n"
+                            "Arquivos: "
+                            + ", ".join(
+                                caminho.name
+                                for caminho in valor.arquivos_zip_gnre
+                            )
+                        )
+                    elif valor.somente_gnre_zip:
+                        resumo += "\nNenhuma GNRE encontrada para essa janela."
                     self._registrar("Processamento finalizado.")
                     if valor.codigo_saida == 0:
                         messagebox.showinfo("Processamento concluído", resumo, parent=self)
@@ -379,7 +404,7 @@ class Aplicacao(tk.Tk):
 
     def _abrir_pasta(self):
         pasta = (
-            self.ultimo_resultado.pasta_organizada
+            self.ultimo_resultado.pasta_resultado
             if self.ultimo_resultado
             else DATA_DIR / "xml_por_cnpj"
         )

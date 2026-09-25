@@ -188,6 +188,7 @@ def organizar_xml(
     pasta_saida=PASTA_ORGANIZADOS,
     configuracao=None,
     incluir_gnre=True,
+    somente_gnre=False,
 ):
     caminho_xml = Path(caminho_xml)
     configuracao = configuracao or carregar_configuracao()
@@ -216,9 +217,9 @@ def organizar_xml(
     )
 
     
-    destinos = [destino_principal]
+    destinos = [] if somente_gnre else [destino_principal]
 
-    if incluir_gnre:
+    if incluir_gnre or somente_gnre:
         ufs_gnre_configuradas = configuracao["gnre_ufs_por_unidade"].get(unidade)
         if not isinstance(ufs_gnre_configuradas, list):
             raise RuntimeError(
