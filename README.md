@@ -176,6 +176,8 @@ python executar_diario.py --primeira-data 2026-09-01
 O arquivo `app_desktop.py` oferece uma interface para uso manual no Windows. Nela é
 possível conectar o computador ao Bling, selecionar a data da janela e escolher entre:
 
+![Interface do aplicativo Automação XML Bling](docs/images/interface-aplicativo.png)
+
 - NF-e organizadas sem cópias na pasta GNRE;
 - NF-e organizadas com as cópias adicionais na pasta GNRE.
 - somente as GNRE em arquivos ZIP separados por unidade.
