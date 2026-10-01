@@ -4,6 +4,8 @@ Automação em Python para consultar as NF-e emitidas no Bling, baixar os XMLs a
 
 Este é um projeto real, desenvolvido para ser utilizado em produção na empresa onde trabalho e atender uma necessidade operacional diária.
 
+![Interface do aplicativo Automação XML Bling](docs/images/interface-aplicativo.png)
+
 O projeto pode operar em uma máquina Windows dedicada ou em um contêiner Docker. Nos dois modos, a execução diária ocorre às **14h10**, considerando a janela encerrada às **14h**.
 
 ## Fluxo da automação
@@ -175,8 +177,6 @@ python executar_diario.py --primeira-data 2026-09-01
 
 O arquivo `app_desktop.py` oferece uma interface para uso manual no Windows. Nela é
 possível conectar o computador ao Bling, selecionar a data da janela e escolher entre:
-
-![Interface do aplicativo Automação XML Bling](docs/images/interface-aplicativo.png)
 
 - NF-e organizadas sem cópias na pasta GNRE;
 - NF-e organizadas com as cópias adicionais na pasta GNRE.
