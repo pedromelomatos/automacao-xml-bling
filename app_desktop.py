@@ -58,9 +58,9 @@ COR_FUNDO = "#F5F7F6"
 COR_TEXTO = "#24302A"
 
 
-def ultima_janela_disponivel(agora=None):
+def ultima_janela_disponivel(agora=None, ate_agora=False):
     agora = agora or datetime.now()
-    if agora.time() >= horario(14):
+    if ate_agora or agora.time() >= horario(14):
         return agora.date()
     return agora.date() - timedelta(days=1)
 
@@ -81,8 +81,8 @@ class Aplicacao(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Automação XML Bling")
-        self.geometry("760x620")
-        self.minsize(680, 560)
+        self.geometry("760x700")
+        self.minsize(680, 660)
         self.configure(bg=COR_FUNDO)
         self.fila = queue.Queue()
         self.em_execucao = False
@@ -133,6 +133,7 @@ class Aplicacao(tk.Tk):
         )
         estilo.configure("Secondary.TButton", padding=(12, 8))
         estilo.configure("TRadiobutton", background="white", foreground=COR_TEXTO)
+        estilo.configure("TCheckbutton", background="white", foreground=COR_TEXTO)
 
     def _montar_tela(self):
         cabecalho = ttk.Frame(self, padding=(28, 22, 28, 12))
@@ -142,7 +143,7 @@ class Aplicacao(tk.Tk):
         ).pack(anchor="w")
         ttk.Label(
             cabecalho,
-            text="Baixe e organize as NF-e de uma janela encerrada às 14h.",
+            text="Baixe e organize as NF-e da janela das 14h ou consulte até agora.",
             style="Subtitle.TLabel",
         ).pack(anchor="w", pady=(4, 0))
 
@@ -184,12 +185,31 @@ class Aplicacao(tk.Tk):
         )
         self.campo_data.grid(row=1, column=1, sticky="w", pady=(14, 0))
 
+        self.ate_agora_var = tk.BooleanVar(value=False)
+        self.opcao_ate_agora = ttk.Checkbutton(
+            opcoes,
+            text="Até agora (permite consultar hoje antes das 14h)",
+            variable=self.ate_agora_var,
+            command=self._alternar_ate_agora,
+        )
+        self.opcao_ate_agora.grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=(12, 0)
+        )
+        ttk.Label(
+            opcoes,
+            text=(
+                "A janela começa às 14h do dia anterior à data selecionada.\n"
+                "Até agora encerra no horário da consulta, com limite às 14h."
+            ),
+            style="Card.TLabel",
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
         ttk.Label(opcoes, text="Resultado", style="Card.TLabel").grid(
-            row=2, column=0, sticky="nw", pady=(16, 0), padx=(0, 18)
+            row=4, column=0, sticky="nw", pady=(16, 0), padx=(0, 18)
         )
         self.modo_var = tk.StringVar(value="com_gnre")
         radios = ttk.Frame(opcoes, style="Card.TFrame")
-        radios.grid(row=2, column=1, sticky="w", pady=(12, 0))
+        radios.grid(row=4, column=1, sticky="w", pady=(12, 0))
         ttk.Radiobutton(
             radios,
             text="NF-e organizadas + pasta GNRE",
@@ -210,7 +230,7 @@ class Aplicacao(tk.Tk):
         ).pack(anchor="w", pady=2)
 
         acoes = ttk.Frame(opcoes, style="Card.TFrame")
-        acoes.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(18, 0))
+        acoes.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(18, 0))
         self.botao_executar = ttk.Button(
             acoes,
             text="Baixar e organizar",
@@ -275,6 +295,7 @@ class Aplicacao(tk.Tk):
         self.botao_executar.configure(state=estado)
         self.botao_conectar.configure(state=estado)
         self.campo_data.configure(state=estado)
+        self.opcao_ate_agora.configure(state=estado)
         if ativa:
             self.progresso.start(12)
         else:
@@ -299,16 +320,27 @@ class Aplicacao(tk.Tk):
         except Exception as erro:
             self.fila.put(("erro", f"Não foi possível conectar ao Bling: {erro}"))
 
+    def _alternar_ate_agora(self):
+        agora = datetime.now()
+        ate_agora = self.ate_agora_var.get()
+        limite_anterior = ultima_janela_disponivel(agora, ate_agora=not ate_agora)
+        if self.data_var.get().strip() == limite_anterior.strftime("%d/%m/%Y"):
+            self.data_var.set(
+                ultima_janela_disponivel(agora, ate_agora=ate_agora).strftime("%d/%m/%Y")
+            )
+
     def _ler_data(self):
         try:
             selecionada = datetime.strptime(self.data_var.get().strip(), "%d/%m/%Y").date()
         except ValueError as erro:
             raise RuntimeError("Informe a data no formato DD/MM/AAAA.") from erro
-        limite = ultima_janela_disponivel()
+        limite = ultima_janela_disponivel(ate_agora=self.ate_agora_var.get())
         if selecionada > limite:
+            if self.ate_agora_var.get():
+                raise RuntimeError("Selecione uma data até hoje para consultar até agora.")
             raise RuntimeError(
                 "Essa janela ainda não terminou. Selecione uma data até "
-                f"{limite.strftime('%d/%m/%Y')}."
+                f"{limite.strftime('%d/%m/%Y')} ou marque Até agora para consultar hoje."
             )
         return selecionada
 
@@ -325,11 +357,12 @@ class Aplicacao(tk.Tk):
             f"Iniciando a janela {data_selecionada.strftime('%d/%m/%Y')}..."
         )
         modo = self.modo_var.get()
+        ate_agora = self.ate_agora_var.get()
         incluir_gnre = modo == "com_gnre"
         somente_gnre_zip = modo == "somente_gnre_zip"
         threading.Thread(
             target=self._trabalho_download,
-            args=(data_selecionada, incluir_gnre, somente_gnre_zip),
+            args=(data_selecionada, incluir_gnre, somente_gnre_zip, ate_agora),
             daemon=True,
         ).start()
 
@@ -338,12 +371,14 @@ class Aplicacao(tk.Tk):
         data_selecionada,
         incluir_gnre,
         somente_gnre_zip,
+        ate_agora,
     ):
         try:
             handler = HandlerFila(self.fila)
             resultado = processar_download(
                 data_selecionada,
                 janela_14h=True,
+                ate_agora=ate_agora,
                 incluir_gnre=incluir_gnre,
                 somente_gnre_zip=somente_gnre_zip,
                 handler_log=handler,

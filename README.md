@@ -182,6 +182,11 @@ possível conectar o computador ao Bling, selecionar a data da janela e escolher
 - NF-e organizadas com as cópias adicionais na pasta GNRE.
 - somente as GNRE em arquivos ZIP separados por unidade.
 
+Marque **Até agora** para consultar a janela de hoje antes das 14h. A data
+sugerida passa para hoje e o período vai das 14h de ontem até o horário da
+consulta. Depois das 14h, o término continua limitado às 14h da data selecionada.
+Com a opção desmarcada, somente janelas já encerradas ficam disponíveis.
+
 No modo de ZIP, os arquivos são criados em `Documentos\Automacao XML
 Bling\GNRE - ZIP`, com nomes como `Matriz DD-MM-AAAA.zip` e `Filial
 DD-MM-AAAA.zip`. Dentro de cada ZIP, os XMLs ficam separados por marketplace e
