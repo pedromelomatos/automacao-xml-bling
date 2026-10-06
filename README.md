@@ -6,6 +6,8 @@ Este é um projeto real, desenvolvido para ser utilizado em produção na empres
 
 ![Interface do aplicativo Automação XML Bling](docs/images/interface-aplicativo.png)
 
+Interface da versão atualizada do executável, antes de iniciar uma consulta.
+
 O projeto pode operar em uma máquina Windows dedicada ou em um contêiner Docker. Nos dois modos, a execução diária ocorre às **14h10**, considerando a janela encerrada às **14h**.
 
 ## Fluxo da automação
@@ -147,10 +149,10 @@ Baixe uma janela específica das 14h:
 python baixar_xmls.py 2026-09-21 --janela-14h
 ```
 
-Antes das 14h, é possível testar uma janela parcial até o horário atual:
+Para consultar desde as 14h de ontem até o horário atual, use a data de hoje:
 
 ```bash
-python baixar_xmls.py 2026-09-21 --janela-14h --ate-agora
+python baixar_xmls.py --janela-14h --ate-agora
 ```
 
 Execute o controle diário e a recuperação de pendências:
@@ -182,10 +184,37 @@ possível conectar o computador ao Bling, selecionar a data da janela e escolher
 - NF-e organizadas com as cópias adicionais na pasta GNRE.
 - somente as GNRE em arquivos ZIP separados por unidade.
 
-Marque **Até agora** para consultar a janela de hoje antes das 14h. A data
-sugerida passa para hoje e o período vai das 14h de ontem até o horário da
-consulta. Depois das 14h, o término continua limitado às 14h da data selecionada.
-Com a opção desmarcada, somente janelas já encerradas ficam disponíveis.
+Clique em **Hoje até agora** para consultar desde as **14h de ontem até o horário
+em que a consulta é iniciada**. A data fica fixada em hoje nesse modo. Às 13h,
+o período termina às 13h; às 16h, termina às 16h, incluindo as emissões posteriores
+às 14h. O atalho selecionado recebe destaque em verde.
+Use **Última janela completa** para voltar à consulta de janelas já encerradas
+às 14h ou para escolher outra data.
+
+Os atalhos **Última janela completa** e **Hoje até agora** preenchem a data e
+ajustam o modo de consulta automaticamente. Abaixo das opções de data, a
+interface mostra o início e o término do período que será consultado. Em uma
+consulta parcial, o término mostrado é uma prévia que se atualiza até o início
+da execução; o download considera o horário em que a consulta começa.
+
+Ao concluir, o painel **Acompanhamento** mantém na tela a data da última janela,
+as quantidades de NF-e encontradas, XMLs baixados, arquivos já existentes e erros.
+O resumo inclui avisos de notas sem chave de acesso e informações sobre os ZIPs
+de GNRE, quando houver. Ele permanece disponível durante outras consultas na
+mesma sessão; ao fechar o aplicativo, os registros continuam nos arquivos de log.
+Use **Ver detalhes** para expandir os logs na tela e **Abrir pasta de resultado**
+para acessar os arquivos. Em janelas menores, a barra de rolagem permite acessar
+todo o conteúdo.
+
+Em janelas largas, as opções e o resumo ficam lado a lado; em janelas menores,
+o resumo aparece abaixo das opções. Cada modo de saída traz uma explicação, e
+o botão principal muda para **Baixar e gerar ZIPs** no modo de ZIP. A barra de
+progresso aparece durante a execução, com estados visuais para andamento,
+sucesso, avisos e falhas. As opções ficam bloqueadas enquanto há trabalho em
+andamento. O botão de abrir resultado só fica disponível quando a pasta existe.
+
+O estado **Autorização salva** indica que o arquivo de autorização está presente
+neste computador. A conexão com o Bling é verificada ao iniciar uma consulta.
 
 No modo de ZIP, os arquivos são criados em `Documentos\Automacao XML
 Bling\GNRE - ZIP`, com nomes como `Matriz DD-MM-AAAA.zip` e `Filial

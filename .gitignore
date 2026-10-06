@@ -14,6 +14,9 @@
 /xml_por_cnpj/
 /xml_por_marketplace/
 /xml_teste/
+/GNRE - ZIP/
+*.xml
+*.XML
 *.log
 estado_execucao.json
 .executor_diario.lock
@@ -47,6 +50,7 @@ estado_execucao.json
 /INSTRUCOES_APLICATIVO.txt
 
 # Arquivos temporarios e backups
+/tmp/
 *.tmp
 *.bak
 *.swp

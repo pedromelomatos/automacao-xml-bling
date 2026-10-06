@@ -62,7 +62,7 @@ def obter_argumentos():
     parser.add_argument(
         "--ate-agora",
         action="store_true",
-        help="modo de teste: encerra a janela no horário atual se ainda não forem 14h",
+        help="consulta desde as 14h de ontem até o horário atual, usando a data de hoje",
     )
     parser.add_argument(
         "--sem-gnre",
@@ -82,20 +82,22 @@ def calcular_periodo(data_consulta, janela_14h, ate_agora=False, agora=None):
     if ate_agora and not janela_14h:
         raise RuntimeError("Use --ate-agora junto com --janela-14h.")
 
+    if ate_agora:
+        if data_consulta != agora.date():
+            raise RuntimeError("Hoje até agora exige a data de hoje.")
+        return (
+            datetime.combine(data_consulta - timedelta(days=1), horario(14)),
+            agora.replace(microsecond=0),
+        )
+
     if janela_14h:
         inicio = datetime.combine(data_consulta - timedelta(days=1), horario(14))
-        corte = datetime.combine(data_consulta, horario(14))
-        if ate_agora:
-            fim = min(agora.replace(microsecond=0), corte)
-            if fim <= inicio:
-                raise RuntimeError("A janela de teste ainda não começou.")
-        else:
-            fim = corte
-            if fim > agora:
-                raise RuntimeError(
-                    "A janela das 14h ainda não terminou. "
-                    "Para um teste parcial, acrescente --ate-agora."
-                )
+        fim = datetime.combine(data_consulta, horario(14))
+        if fim > agora:
+            raise RuntimeError(
+                "A janela das 14h ainda não terminou. "
+                "Para consultar as emissões de hoje até o horário atual, acrescente --ate-agora."
+            )
         return inicio, fim
 
     return (
