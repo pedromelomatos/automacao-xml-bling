@@ -17,7 +17,7 @@ COPY dependencias_docker/ /wheels/
 RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
     && rm -rf /wheels
 
-COPY baixar_xmls.py bling_auth.py organizar_xmls.py executar_diario.py agendador_docker.py ./
+COPY baixar_xmls.py bling_auth.py organizar_xmls.py executar_diario.py agendador_docker.py preparar_instalacao.py ./
 COPY configuracao.json ./
 
 RUN mkdir -p /dados /segredos

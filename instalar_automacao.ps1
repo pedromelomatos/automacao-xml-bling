@@ -1,5 +1,7 @@
-param(
-    [switch]$ValidarSomente
+﻿param(
+    [switch]$ValidarSomente,
+    [string]$PrimeiraData,
+    [switch]$UltimaJanela
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,6 +18,7 @@ else {
     $PastaProjeto = $PastaInstalador
 }
 $Executor = Join-Path $PastaProjeto "executar_diario.py"
+$Preparador = Join-Path $PastaProjeto "preparar_instalacao.py"
 $Requisitos = Join-Path $PastaProjeto "requirements.txt"
 $Dependencias = Join-Path $PastaInstalador "dependencias"
 $InstaladorPython = Join-Path $PastaInstalador "python-3.14.7-amd64.exe"
@@ -140,6 +143,7 @@ try {
 
     $ArquivosObrigatorios = @(
         "executar_diario.py",
+        "preparar_instalacao.py",
         "baixar_xmls.py",
         "organizar_xmls.py",
         "bling_auth.py",
@@ -215,6 +219,28 @@ try {
         }
     }
     Escrever-Etapa "Dependências Python disponíveis."
+
+    if ($PrimeiraData -and $UltimaJanela) {
+        throw "Escolha somente -PrimeiraData ou -UltimaJanela."
+    }
+    $ArgumentosPreparacao = $PrefixoPython + @($Preparador)
+    if ($ValidarSomente) {
+        $ArgumentosPreparacao += "--validar-somente"
+    }
+    elseif ($PrimeiraData) {
+        $ArgumentosPreparacao += @("--primeira-data", $PrimeiraData)
+    }
+    elseif ($UltimaJanela) {
+        $ArgumentosPreparacao += "--ultima-janela"
+    }
+    else {
+        $ArgumentosPreparacao += "--interativo"
+    }
+    & $PythonExe @ArgumentosPreparacao
+    if ($LASTEXITCODE -ne 0) {
+        throw "A preparação ou a conexão com o Bling falhou. O agendamento não foi criado nem alterado."
+    }
+    Escrever-Etapa "Configuração inicial e acesso ao Bling validados."
 
     $ArgumentosSimulacao = $PrefixoPython + @($Executor, "--simular")
     & $PythonExe @ArgumentosSimulacao

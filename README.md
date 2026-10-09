@@ -67,17 +67,26 @@ Indicada para um computador Windows dedicado.
 2. Copie `configuracao.example.json` para `configuracao.json` e preencha os dados reais.
 3. Adicione `.env` e `tokens.json` na raiz do projeto.
 4. Abra `Instalar automacao.cmd`.
-5. Confira a tarefa `Automacao XML Bling - Diario` no Agendador de Tarefas.
+5. Escolha a última janela encerrada ou informe a primeira data a recuperar.
+6. Confira a tarefa `Automacao XML Bling - Diario` no Agendador de Tarefas.
 
 O instalador:
 
 - localiza ou instala o Python;
 - instala as dependências;
+- permite escolher a primeira janela, sem marcar notas como processadas;
+- testa a conexão e a permissão de consulta de NF-e no Bling;
 - valida o executor em modo de simulação;
 - cria a execução diária para as 14h10;
 - configura novas tentativas em caso de falha.
 
 A tela pode permanecer bloqueada, mas o usuário configurado para a tarefa precisa continuar conectado.
+
+A conexão de teste não baixa XMLs e pode renovar os tokens. Se ela falhar, o
+instalador não cria nem altera a tarefa. Use o fuso de Brasília no Windows.
+Para validar sem criar tarefa ou salvar a escolha, execute
+`powershell -NoProfile -ExecutionPolicy Bypass -File instalar_automacao.ps1 -ValidarSomente`.
+Para instalar sem perguntas, use `-PrimeiraData AAAA-MM-DD` ou `-UltimaJanela`.
 
 ### Docker
 
@@ -88,7 +97,10 @@ Requisitos:
 - arquitetura `amd64`;
 - acesso à internet para a API do Bling.
 
-Copie `configuracao.example.json` para `configuracao.json` e preencha os dados reais. Coloque `.env` na raiz e `tokens.json` dentro de `segredos/`. Em seguida:
+Copie `configuracao.example.json` para `configuracao.json` e preencha os dados reais. Coloque `.env` na raiz e `tokens.json` dentro de `segredos/`.
+Na primeira instalação, a opção padrão começa pela última janela encerrada.
+Para recuperar desde outra data, acrescente `AUTOMACAO_PRIMEIRA_DATA=AAAA-MM-DD`
+ao `.env`, usando uma janela já encerrada. Em seguida:
 
 ```bash
 docker compose up -d --build
@@ -101,6 +113,12 @@ docker compose logs -f automacao-xml-bling
 ```
 
 O contêiner inicia junto com o Docker, verifica dias pendentes e agenda as próximas execuções para as 14h10 no fuso `America/Sao_Paulo`.
+
+Antes de iniciar downloads e agendamento, o contêiner valida a configuração e o
+acesso às NF-e no Bling. Se houver falha, ele termina sem avançar o estado; a
+política de reinício do Docker pode tentar novamente. A primeira janela escolhida
+fica em `dados/configuracao_execucao.json`; reinícios preservam essa escolha e o
+histórico, mesmo que a variável `AUTOMACAO_PRIMEIRA_DATA` seja alterada depois.
 
 Comandos úteis:
 
@@ -174,6 +192,31 @@ python executar_diario.py --primeira-data 2026-09-01
 ```
 
 `--primeira-data` só é aceito antes da criação de `estado_execucao.json`.
+
+A instalação salva a primeira janela em `configuracao_execucao.json`, separado
+do histórico de sucesso. O executor usa essa data até concluir a primeira janela;
+depois continua a partir de `estado_execucao.json`. Uma reinstalação preserva o
+progresso e não reinicia a recuperação de dias já concluídos.
+
+## Pacote da automação diária
+
+Gere o ZIP atualizado para entrega com:
+
+```powershell
+py -3.14 empacotar_automacao.py
+```
+
+O arquivo `Pacote-Automacao-XML-Bling.zip` contém o código atual, a configuração
+local de unidades e marketplaces, instaladores Windows/Docker, dependências offline
+e instruções. Requer `python-3.14.7-amd64.exe` na raiz, com SHA256 válido.
+O pacote usa uma lista explícita de arquivos: não inclui `.env`, `tokens.json`,
+XMLs, logs, histórico nem escolha de data da máquina de origem. O `manifesto.json`
+registra os hashes dos arquivos entregues para conferir a integridade.
+
+No pacote, o TI coloca `.env` e `tokens.json` em `arquivos-automacao` antes de
+instalar e escolhe uma das pastas `instalacao-windows` ou `instalacao-docker`.
+As instruções específicas acompanham cada pasta. Ao migrar uma instalação,
+transfira também a pasta `dados` da máquina anterior e mantenha apenas uma ativa.
 
 ## Aplicativo com interface
 
@@ -254,6 +297,7 @@ Os principais arquivos de acompanhamento são:
 | `logs/executor_diario.log` | Inicialização, pendências, sucessos e falhas do executor |
 | `logs/automacao_AAAA-MM-DD_14h.log` | Resultado detalhado de cada janela |
 | `estado_execucao.json` | Última janela concluída e data da atualização |
+| `configuracao_execucao.json` | Primeira janela escolhida na instalação |
 
 No Docker, esses arquivos ficam dentro de `dados/`. Em uma instalação organizada para Windows, também podem ficar na pasta compartilhada `dados/`.
 
@@ -264,7 +308,7 @@ O estado só avança depois que uma janela termina com sucesso. Se a máquina fi
 Execute os testes automatizados com:
 
 ```bash
-python -m unittest -v
+python -m unittest discover -p "test_*.py" -v
 ```
 
 ## Principais arquivos
@@ -275,6 +319,8 @@ python -m unittest -v
 | `organizar_xmls.py` | Classifica os XMLs na estrutura de pastas |
 | `executar_diario.py` | Controla estado, pendências e execução exclusiva |
 | `agendador_docker.py` | Agenda e repete execuções dentro do contêiner |
+| `preparar_instalacao.py` | Escolhe a primeira janela e valida o acesso ao Bling |
+| `empacotar_automacao.py` | Gera o pacote diário atualizado sem credenciais ou histórico |
 | `bling_auth.py` | Carrega e renova os tokens OAuth |
 | `autenticar_bling.py` | Realiza a autorização OAuth inicial |
 | `configuracao.example.json` | Modelo anonimizado da configuração de unidades, canais e intermediadores |

@@ -31,6 +31,7 @@ def obter_pasta_dados():
 
 DATA_DIR = obter_pasta_dados()
 ARQUIVO_ESTADO = DATA_DIR / "estado_execucao.json"
+ARQUIVO_CONFIGURACAO_EXECUCAO = DATA_DIR / "configuracao_execucao.json"
 ARQUIVO_BLOQUEIO = DATA_DIR / ".executor_diario.lock"
 SCRIPT_DOWNLOAD = BASE_DIR / "baixar_xmls.py"
 
@@ -104,6 +105,17 @@ def salvar_estado(data_concluida, caminho=ARQUIVO_ESTADO, agora=None):
         temporario.replace(caminho)
     finally:
         temporario.unlink(missing_ok=True)
+
+
+def carregar_primeira_data(caminho=ARQUIVO_CONFIGURACAO_EXECUCAO):
+    caminho = Path(caminho)
+    if not caminho.exists():
+        return None
+    try:
+        dados = json.loads(caminho.read_text(encoding="utf-8"))
+        return date.fromisoformat(dados["primeira_data"])
+    except (OSError, ValueError, KeyError, TypeError) as erro:
+        raise RuntimeError(f"Configuração inicial inválida em {caminho.name}.") from erro
 
 
 def calcular_pendencias(ultima_concluida, limite, primeira_data=None):
@@ -200,10 +212,13 @@ def main():
         with bloqueio_exclusivo():
             limite = ultima_janela_encerrada(datetime.now())
             ultima_concluida = carregar_estado()
+            primeira_data = argumentos.primeira_data
+            if ultima_concluida is None and primeira_data is None:
+                primeira_data = carregar_primeira_data()
             pendencias = calcular_pendencias(
                 ultima_concluida,
                 limite,
-                argumentos.primeira_data,
+                primeira_data,
             )
 
             if ultima_concluida:

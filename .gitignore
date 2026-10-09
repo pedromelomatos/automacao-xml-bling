@@ -19,6 +19,7 @@
 *.XML
 *.log
 estado_execucao.json
+configuracao_execucao.json
 .executor_diario.lock
 
 # Segredos locais; preserva somente o aviso sem credenciais

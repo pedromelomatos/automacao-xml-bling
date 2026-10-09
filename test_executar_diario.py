@@ -1,11 +1,17 @@
 import json
 import tempfile
 import unittest
+from contextlib import nullcontext
 from datetime import date, datetime
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import executar_diario
 
 from executar_diario import (
     calcular_pendencias,
+    carregar_primeira_data,
     carregar_estado,
     processar_pendencias,
     salvar_estado,
@@ -14,6 +20,35 @@ from executar_diario import (
 
 
 class ExecutorDiarioTests(unittest.TestCase):
+    def test_primeira_data_configurada_e_validada(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho = Path(pasta) / "configuracao_execucao.json"
+            self.assertIsNone(carregar_primeira_data(caminho))
+            caminho.write_text('{"primeira_data":"2026-10-01"}', encoding="utf-8")
+            self.assertEqual(carregar_primeira_data(caminho), date(2026, 10, 1))
+            caminho.write_text('{"primeira_data":"invalida"}', encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                carregar_primeira_data(caminho)
+
+    def test_executor_usa_escolha_ate_haver_historico(self):
+        with patch.object(executar_diario, "obter_argumentos", return_value=SimpleNamespace(
+            primeira_data=None, simular=False,
+        )), patch.object(executar_diario, "configurar_log"), patch.object(
+            executar_diario, "bloqueio_exclusivo", side_effect=nullcontext,
+        ), patch.object(executar_diario, "carregar_estado", return_value=None) as estado, patch.object(
+            executar_diario, "carregar_primeira_data", return_value=date(2026, 10, 6),
+        ) as inicial, patch.object(
+            executar_diario, "ultima_janela_encerrada", return_value=date(2026, 10, 8),
+        ), patch.object(executar_diario, "processar_pendencias", return_value=None) as processar:
+            self.assertEqual(executar_diario.main(), 0)
+            processar.assert_called_once_with([date(2026, 10, 6), date(2026, 10, 7), date(2026, 10, 8)])
+            estado.return_value = date(2026, 10, 7)
+            inicial.reset_mock()
+            processar.reset_mock()
+            self.assertEqual(executar_diario.main(), 0)
+            processar.assert_called_once_with([date(2026, 10, 8)])
+            inicial.assert_not_called()
+
     def test_janela_atual_so_fica_disponivel_a_partir_das_14h(self):
         self.assertEqual(
             ultima_janela_encerrada(datetime(2026, 9, 21, 13, 59, 59)),

@@ -6,6 +6,7 @@ import time
 from datetime import datetime, time as horario, timedelta
 from pathlib import Path
 
+from preparar_instalacao import preparar_instalacao
 
 BASE_DIR = Path(__file__).resolve().parent
 EXECUTOR = BASE_DIR / "executar_diario.py"
@@ -60,6 +61,11 @@ def esperar_ate(instante):
 
 
 def main():
+    try:
+        preparar_instalacao()
+    except (OSError, RuntimeError) as erro:
+        print(f"Instalação não validada: {erro}", flush=True)
+        return 1
     print("Agendador Docker iniciado. Horário diário: 14h10.", flush=True)
     executar_com_retentativas()
     while True:
@@ -74,6 +80,6 @@ def main():
 
 if __name__ == "__main__":
     try:
-        main()
+        raise SystemExit(main())
     except KeyboardInterrupt:
         print("Agendador Docker encerrado.", flush=True)
