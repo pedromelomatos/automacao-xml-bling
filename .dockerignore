@@ -10,4 +10,12 @@
 !executar_diario.py
 !agendador_docker.py
 !preparar_instalacao.py
+!instalar_rclone.py
+!integracao_dropbox.py
+!registro_entregas.py
+!transporte_dropbox.py
 !configuracao.json
+!configuracao_dropbox.example.json
+!dependencias_docker/rclone/
+!dependencias_docker/rclone/*.zip
+!dependencias_docker/rclone/SHA256SUMS

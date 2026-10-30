@@ -5,6 +5,7 @@
 **/tokens.json
 **/tokens*.json
 /configuracao.json
+/configuracao_dropbox.json
 
 # Dados gerados pela automacao
 /dados/
@@ -15,6 +16,7 @@
 /xml_por_marketplace/
 /xml_teste/
 /GNRE - ZIP/
+/gnre/
 *.xml
 *.XML
 *.log
@@ -50,7 +52,13 @@ configuracao_execucao.json
 /LEIA-ME - INSTALACAO.txt
 /INSTRUCOES_APLICATIVO.txt
 
+# Documentacao interna mantida somente no computador
+/PLANO_INTEGRACAO_DROPBOX_REDIS.md
+/RETOMADA_INTEGRACAO_DROPBOX.md
+/docs/integracao_debian.md
+
 # Arquivos temporarios e backups
+/.backup-local/
 /tmp/
 *.tmp
 *.bak

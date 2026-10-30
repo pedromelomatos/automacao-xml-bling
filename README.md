@@ -90,6 +90,8 @@ Para instalar sem perguntas, use `-PrimeiraData AAAA-MM-DD` ou `-UltimaJanela`.
 
 ### Docker
 
+Para a integração Dropbox no Debian, siga [docs/integracao_debian.md](docs/integracao_debian.md). O instalador prepara Redis e executa somente a simulação. Os perfis de download e entrega ficam parados nessa etapa.
+
 Requisitos:
 
 - Docker Engine ou Docker Desktop;
@@ -97,13 +99,13 @@ Requisitos:
 - arquitetura `amd64`;
 - acesso à internet para a API do Bling.
 
-Copie `configuracao.example.json` para `configuracao.json` e preencha os dados reais. Coloque `.env` na raiz e `tokens.json` dentro de `segredos/`.
+Copie `configuracao.example.json` para `configuracao.json` e preencha os dados reais. Copie também `configuracao_dropbox.example.json` para `configuracao_dropbox.json`, mantendo `habilitada=false` e `modo=simulacao` durante a preparação. Coloque `.env` na raiz e `tokens.json` dentro de `segredos/`.
 Na primeira instalação, a opção padrão começa pela última janela encerrada.
 Para recuperar desde outra data, acrescente `AUTOMACAO_PRIMEIRA_DATA=AAAA-MM-DD`
 ao `.env`, usando uma janela já encerrada. Em seguida:
 
 ```bash
-docker compose up -d --build
+docker compose --profile download up -d --build
 ```
 
 Confira o serviço:
@@ -113,6 +115,8 @@ docker compose logs -f automacao-xml-bling
 ```
 
 O contêiner inicia junto com o Docker, verifica dias pendentes e agenda as próximas execuções para as 14h10 no fuso `America/Sao_Paulo`.
+
+Sem perfis, o Compose inicia somente Redis. O trabalhador de entregas é um serviço separado, no perfil `entrega`; ele não depende de haver novas janelas de download. A configuração de exemplo bloqueia uploads. O rclone é incluído na imagem com checksum verificado; Redis usa volume persistente, AOF e política sem descarte de registros.
 
 Antes de iniciar downloads e agendamento, o contêiner valida a configuração e o
 acesso às NF-e no Bling. Se houver falha, ele termina sem avançar o estado; a

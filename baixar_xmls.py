@@ -19,6 +19,7 @@ from xml.etree import ElementTree
 import requests
 
 from bling_auth import obter_access_token
+from integracao_dropbox import registrar_metadados_download
 from organizar_xmls import (
     carregar_configuracao,
     limpar_componente_pasta,
@@ -420,6 +421,16 @@ def processar_download(
                 except (OSError, RuntimeError) as erro:
                     erros += 1
                     logging.error("[%s/%s] NF-e %s: falha no download: %s", indice, len(notas), numero, erro)
+                    continue
+
+            # Outbox durável separada do histórico de download. Sem configuração
+            # Dropbox esta chamada não altera o comportamento das instalações antigas.
+            if str(nota.get("situacao")) == "6" and not somente_gnre_zip:
+                try:
+                    registrar_metadados_download(caminho, nota, data_dir=DATA_DIR)
+                except (OSError, RuntimeError, ValueError, TypeError) as erro:
+                    erros += 1
+                    logging.error("NF-e %s: falha ao registrar entrega pendente: %s", numero, erro)
                     continue
 
             if janela_14h:

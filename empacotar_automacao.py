@@ -15,6 +15,8 @@ HASH_PYTHON = "9d9eb2709ef81bf5cd30db3c2096bdbc4ea10087c22e62f27d356b36f6ae9649"
 CODIGOS = (
     "baixar_xmls.py", "organizar_xmls.py", "bling_auth.py", "autenticar_bling.py",
     "executar_diario.py", "agendador_docker.py", "preparar_instalacao.py",
+    "integracao_dropbox.py", "registro_entregas.py", "transporte_dropbox.py",
+    "instalar_rclone.py", "configuracao_dropbox.example.json",
     "requirements.txt", "configuracao.json", "configuracao.example.json", ".env.example",
 )
 
@@ -53,6 +55,9 @@ o conteúdo de dados, .env e tokens.json por um meio seguro. Assim, a nova máqu
 continua do último sucesso. Mantenha somente uma instalação ativa.
 
 O robô organiza as NF-e e as cópias GNRE. A rotina diária não gera ZIPs de GNRE.
+A configuração Dropbox incluída começa desabilitada e em simulação. Este pacote
+mantém a instalação diária de download; não habilita envio ao Dropbox. Para
+preparar a integração no Debian, use o pacote dedicado e suas instruções.
 """
 
 LEIA_WINDOWS = """INSTALAÇÃO WINDOWS
@@ -95,7 +100,7 @@ Requer Docker Engine/Desktop com Compose, arquitetura amd64 e internet.
      Substitua AAAA-MM-DD pela data da primeira janela, já encerrada às 14h.
      A janela começa às 14h do dia anterior à data escolhida.
 3. Abra um terminal nesta pasta e execute:
-       docker compose up -d --build
+       docker compose --profile download up -d --build automacao-xml-bling
 4. Confira a validação do Bling e o funcionamento:
        docker compose logs -f automacao-xml-bling
 
@@ -104,18 +109,41 @@ o processo termina sem avançar o histórico ou salvar a escolha; o Docker pode
 reiniciá-lo conforme sua política. Corrija a causa e reinicie o serviço.
 O teste pode renovar os tokens, mas não baixa XMLs.
 
+O perfil download inicia o agendador e o Redis necessário à composição atual.
+Sem perfis, docker compose up inicia somente Redis. O perfil entrega não é
+iniciado nesta instalação e a configuração Dropbox distribuída tem habilitada=false
+e modo=simulacao. O arquivo arquivos-automacao/configuracao_dropbox.json já existe
+no pacote para que o bind mount seja um arquivo, sem precisar criá-lo manualmente.
+O build inclui rclone Linux verificado por SHA-256 e pode baixar seu release
+oficial; internet é necessária também para esse preparo da imagem.
+
 A escolha fica em ../dados/configuracao_execucao.json. Reinícios e reinstalações
 preservam a escolha e o histórico; alterações posteriores da variável .env não
 mudam a data de uma instalação já configurada. Execução diária às 14h10 no fuso
 America/Sao_Paulo, com recuperação de pendências e retentativas em caso de falha.
 
 Para somente validar antes de subir o serviço (pode renovar tokens):
-    docker compose run --rm automacao-xml-bling python preparar_instalacao.py --validar-somente
+    docker compose run --rm --no-deps automacao-xml-bling python preparar_instalacao.py --validar-somente
 
 Parar:      docker compose down
 Reiniciar:  docker compose restart
 Use somente uma instalação ativa por vez.
 """
+
+
+def adaptar_dockerfile(texto):
+    """Reescreve cada fonte COPY conhecida para o layout do pacote legado."""
+    fontes = {nome: "arquivos-automacao/" + nome for nome in CODIGOS}
+    fontes["dependencias_docker/"] = "instalacao-docker/dependencias/"
+    linhas = []
+    for linha in texto.splitlines():
+        partes = linha.split()
+        if partes and partes[0].upper() == "COPY":
+            if len(partes) < 3 or partes[1].startswith("["):
+                raise RuntimeError("Formato COPY não suportado pelo empacotador legado.")
+            linha = "COPY " + " ".join(fontes.get(p, p) for p in partes[1:-1]) + " " + partes[-1]
+        linhas.append(linha)
+    return "\n".join(linhas).replace("/segredos", "/credenciais") + "\n"
 
 
 def gerar_pacote(raiz=BASE_DIR):
@@ -145,6 +173,11 @@ def gerar_pacote(raiz=BASE_DIR):
             pasta.mkdir(parents=True)
         for nome in CODIGOS:
             shutil.copy2(raiz / nome, codigo / nome)
+        configuracao_dropbox = json.loads((raiz / "configuracao_dropbox.example.json").read_text(encoding="utf-8"))
+        configuracao_dropbox.update(habilitada=False, modo="simulacao")
+        (codigo / "configuracao_dropbox.json").write_text(
+            json.dumps(configuracao_dropbox, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+        )
         for nome in ("instalar_automacao.ps1", "Instalar automacao.cmd", instalador.name):
             shutil.copy2(raiz / nome, windows / nome)
         for origem, destino_dependencias in (
@@ -155,21 +188,16 @@ def gerar_pacote(raiz=BASE_DIR):
             for p in origem.glob("*.whl"):
                 shutil.copy2(p, destino_dependencias / p.name)
 
-        dockerfile = (raiz / "Dockerfile").read_text(encoding="utf-8")
-        dockerfile = dockerfile.replace("/segredos", "/credenciais")
-        dockerfile = dockerfile.replace("COPY requirements.txt", "COPY arquivos-automacao/requirements.txt")
-        dockerfile = dockerfile.replace("COPY dependencias_docker/", "COPY instalacao-docker/dependencias/")
-        fontes = "baixar_xmls.py bling_auth.py organizar_xmls.py executar_diario.py agendador_docker.py preparar_instalacao.py"
-        dockerfile = dockerfile.replace("COPY " + fontes, "COPY " + " ".join("arquivos-automacao/" + n for n in fontes.split()))
-        dockerfile = dockerfile.replace("COPY configuracao.json", "COPY arquivos-automacao/configuracao.json")
+        dockerfile = adaptar_dockerfile((raiz / "Dockerfile").read_text(encoding="utf-8"))
         (docker / "Dockerfile").write_text(dockerfile, encoding="utf-8")
         compose = (raiz / "docker-compose.yml").read_text(encoding="utf-8")
         compose = compose.replace("context: .", "context: ..").replace("dockerfile: Dockerfile", "dockerfile: instalacao-docker/Dockerfile")
         compose = compose.replace("- .env", "- ../arquivos-automacao/.env")
-        compose = compose.replace("BLING_TOKENS_FILE: /segredos/tokens.json", "BLING_TOKENS_FILE: /credenciais/tokens.json")
+        compose = compose.replace("/segredos/", "/credenciais/")
         compose = compose.replace("./dados:/dados", "../dados:/dados")
         compose = compose.replace("./segredos:/segredos", "../arquivos-automacao:/credenciais")
         compose = compose.replace("./configuracao.json:", "../arquivos-automacao/configuracao.json:")
+        compose = compose.replace("./configuracao_dropbox.json:", "../arquivos-automacao/configuracao_dropbox.json:")
         (docker / "docker-compose.yml").write_text(compose, encoding="utf-8")
         ignorados = ["*", "!arquivos-automacao/"]
         ignorados.extend("!arquivos-automacao/" + nome for nome in CODIGOS if nome not in ("autenticar_bling.py", ".env.example", "configuracao.example.json"))
