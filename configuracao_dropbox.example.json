@@ -1,0 +1,21 @@
+{
+  "habilitada": false,
+  "modo": "simulacao",
+  "inicio_emissao": "2026-10-29T00:00:00-03:00",
+  "redis_url": "redis://redis:6379/0",
+  "redis_prefixo": "bling:dropbox",
+  "rclone_executavel": "rclone",
+  "rclone_config": "/segredos/rclone/rclone.conf",
+  "remote": "bling_dropbox:",
+  "max_por_lote": 5,
+  "intervalo_lotes_segundos": 60,
+  "intervalo_verificacao_segundos": 60,
+  "tempo_limite_segundos": 120,
+  "historico_inicial": "entregas/ja_entregues.json",
+  "rotas": [
+    {"cnpj_emitente": "02423640000300", "canal_bling": "205634610", "pasta": "Filial_Ecommerce/Meli"},
+    {"cnpj_emitente": "02423640000300", "canal_bling": "205985470", "pasta": "Filial_Ecommerce/MeliViapol"},
+    {"cnpj_emitente": "02423640000130", "canal_bling": "205954372", "pasta": "Matriz_Ecommerce/Shopee"},
+    {"cnpj_emitente": "02423640000130", "canal_bling": "205814827", "pasta": "Matriz_Ecommerce/Mglu"}
+  ]
+}
