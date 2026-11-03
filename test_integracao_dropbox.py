@@ -135,17 +135,17 @@ class SimulacaoEPlanejamentoTests(BaseIntegracao):
         redis.assert_not_called()
         transporte.assert_not_called()
 
-    def test_planejador_bloqueia_rota_desconhecida_emitente_errado_corte_e_situacao5(self):
+    def test_planejador_bloqueia_rota_desconhecida_emitente_errado_corte_e_cancelada(self):
         desconhecida, _ = self.nova_nota(9711, canal="999999")
         outro_emitente, _ = self.nova_nota(9712, cnpj="00000000000001")
         antiga, _ = self.nova_nota(9713, emissao="2026-10-29T23:59:59-03:00")
-        situacao5, _ = self.nova_nota(9714, situacao="5")
-        report = integracao.planejar(self.cfg(), [desconhecida, outro_emitente, antiga, situacao5], {})
+        cancelada, _ = self.nova_nota(9714, situacao="2")
+        report = integracao.planejar(self.cfg(), [desconhecida, outro_emitente, antiga, cancelada], {})
         bykey = {n["chave"]: n["decisao"] for n in report["notas"]}
         self.assertEqual(bykey[desconhecida["chave"]], "rota_desconhecida")
         self.assertEqual(bykey[outro_emitente["chave"]], "rota_desconhecida")
         self.assertEqual(bykey[antiga["chave"]], "anterior_ao_corte")
-        self.assertEqual(bykey[situacao5["chave"]], "situacao_nao_autorizada")
+        self.assertEqual(bykey[cancelada["chave"]], "situacao_nao_autorizada")
         self.assertEqual(report["lotes"], [])
 
     def test_planejador_preserva_seed_antigo_e_estados_incerto_revisao_entregue(self):
@@ -281,6 +281,38 @@ class CiclosRedisTests(BaseIntegracao):
         self.assertEqual(self.ciclo(1000)["uploads_executados"], 0)
         self.assertEqual(self.registro().obter(row["chave"])["estado"], "entregue")
         self.assertEqual(self.transporte.tentativas, [])
+
+    def test_situacoes_5_e_6_sao_entregues_sem_reenviar_apos_reinicio(self):
+        for numero, situacao in ((9891, "5"), (9892, "6")):
+            self.nova_nota(numero, situacao=situacao)
+        self.assertEqual(self.ciclo(1000)["uploads_executados"], 2)
+        self.assertEqual(self.ciclo(2000, self.registro())["uploads_executados"], 0)
+        self.assertEqual(len(self.transporte.tentativas), 2)
+        self.assertEqual({n["estado"] for n in self.registro().listar()}, {"entregue"})
+
+    def test_recuperacao_de_11_omitidas_entrega_5_5_1_sem_reenviar_24_anteriores(self):
+        from datetime import date
+        from recuperar_entregas_pendentes import recuperar
+
+        db = self.registro()
+        notas = []
+        for numero in range(10001, 10036):
+            situacao = "6" if numero < 10025 else "5"
+            row, nota = self.nova_nota(numero, situacao=situacao)
+            nota.update(numero=str(numero), dataEmissao="2026-10-30 08:00:00")
+            notas.append(nota)
+            if situacao == "6":
+                db.marcar_preexistente(dict(row, destino=f"{PASTA}/{row['chave']}-nfe.xml"),
+                                      "entrega_anterior_simulada")
+            else:
+                (self.dados / "entregas/metadados" / f"{row['chave']}.json").unlink()
+        report = recuperar(date(2026, 10, 30), aplicar=True, notas=notas,
+                           cfg=self.cfg(), root=self.dados)
+        self.assertEqual((report["metadados_existentes"], report["metadados_registrados"]), (24, 11))
+        self.assertEqual([self.ciclo(t)["uploads_executados"] for t in (1000, 1060, 1120)], [5, 5, 1])
+        self.assertEqual(self.ciclo(2000)["uploads_executados"], 0)
+        self.assertEqual(len(set(self.transporte.tentativas)), 11)
+        self.assertEqual(sum(n["estado"] == "entregue" for n in db.listar()), 35)
 
     def test_timeout_fica_incerto_e_nao_e_reenviado_apos_reinicio(self):
         row, _ = self.nova_nota(9812)

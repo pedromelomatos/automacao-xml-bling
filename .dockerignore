@@ -12,6 +12,7 @@
 !preparar_instalacao.py
 !instalar_rclone.py
 !integracao_dropbox.py
+!recuperar_entregas_pendentes.py
 !registro_entregas.py
 !transporte_dropbox.py
 !configuracao.json

@@ -19,7 +19,7 @@ from xml.etree import ElementTree
 import requests
 
 from bling_auth import obter_access_token
-from integracao_dropbox import registrar_metadados_download
+from integracao_dropbox import SITUACOES_ENTREGA, registrar_metadados_download
 from organizar_xmls import (
     carregar_configuracao,
     limpar_componente_pasta,
@@ -425,7 +425,7 @@ def processar_download(
 
             # Outbox durável separada do histórico de download. Sem configuração
             # Dropbox esta chamada não altera o comportamento das instalações antigas.
-            if str(nota.get("situacao")) == "6" and not somente_gnre_zip:
+            if str(nota.get("situacao")) in SITUACOES_ENTREGA and not somente_gnre_zip:
                 try:
                     registrar_metadados_download(caminho, nota, data_dir=DATA_DIR)
                 except (OSError, RuntimeError, ValueError, TypeError) as erro:

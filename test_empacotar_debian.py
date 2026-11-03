@@ -66,6 +66,8 @@ class DebianPacoteTests(unittest.TestCase):
         (root / "dependencias_docker").mkdir()
         (root / "dependencias_docker/redis-6.4.0-py3-none-any.whl").write_bytes(b"wheel-teste")
         (root / "dependencias_docker/tokens.json").write_text("SEGREDO-NAO-EMPACOTAR", encoding="utf-8")
+        (root / "docs").mkdir()
+        (root / "docs/integracao_debian.md").write_text("INTERNO-NAO-EMPACOTAR", encoding="utf-8")
         (root / "segredos/rclone").mkdir(parents=True)
         for nome in [".env", "tokens.json", "estado_execucao.json", "segredos/rclone/rclone.conf", "nota.xml"]:
             (root / nome).write_text("SEGREDO-NAO-EMPACOTAR", encoding="utf-8")
@@ -88,12 +90,19 @@ class DebianPacoteTests(unittest.TestCase):
             with zipfile.ZipFile(destino) as pacote:
                 nomes = pacote.namelist()
                 self.assertIsNone(pacote.testzip())
+                for nome in ("scripts/diagnostico_debian.sh", "scripts/instalar_integracao_debian.sh",
+                             "scripts/diagnosticar_entregas_debian.py"):
+                    self.assertIn(nome, nomes)
+                instrucoes = pacote.read("LEIA-ME.txt").decode("utf-8")
+                self.assertIn("bash scripts/instalar_integracao_debian.sh", instrucoes)
+                self.assertNotIn("docs/", instrucoes)
                 for nome in nomes:
-                    self.assertFalse(nome.startswith("segredos/") or nome.startswith("dados/"), nome)
+                    self.assertFalse(nome.startswith(("segredos/", "dados/", "docs/")), nome)
                     self.assertNotIn(Path(nome).name, {".env", "tokens.json", "rclone.conf", "estado_execucao.json"})
                     self.assertFalse(nome.lower().endswith(".xml"), nome)
                     self.assertNotIn(b"SEGREDO-NAO-EMPACOTAR", pacote.read(nome), nome)
                     self.assertNotIn(b"PRIVADO-NAO-EMPACOTAR", pacote.read(nome), nome)
+                    self.assertNotIn(b"INTERNO-NAO-EMPACOTAR", pacote.read(nome), nome)
                     if nome.endswith(".sh"):
                         self.assertNotIn(b"\r\n", pacote.read(nome), nome)
                 cfg = json.loads(pacote.read("configuracao_dropbox.example.json"))
@@ -122,7 +131,7 @@ class DebianPacoteTests(unittest.TestCase):
                 empacotar_debian.preparar_historico(path)
 
     def test_instalador_nao_inicia_perfis_de_download_ou_entrega(self):
-        script = (empacotar_debian.BASE_DIR / "docs/instalar_integracao_debian.sh").read_text(encoding="utf-8")
+        script = (empacotar_debian.BASE_DIR / "scripts/instalar_integracao_debian.sh").read_text(encoding="utf-8")
         self.assertIn("dc up -d --wait redis", script)
         self.assertNotIn("--profile", script)
         self.assertIn("integracao_dropbox.py simular", script)

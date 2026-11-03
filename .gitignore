@@ -55,7 +55,12 @@ configuracao_execucao.json
 # Documentacao interna mantida somente no computador
 /PLANO_INTEGRACAO_DROPBOX_REDIS.md
 /RETOMADA_INTEGRACAO_DROPBOX.md
-/docs/integracao_debian.md
+/docs/*
+!/docs/images/
+
+# Testes dos procedimentos locais da implantacao Debian
+/test_primeiro_lote_debian.py
+/test_atualizar_debian_situacoes.py
 
 # Arquivos temporarios e backups
 /.backup-local/

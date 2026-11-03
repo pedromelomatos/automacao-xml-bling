@@ -18,8 +18,9 @@ ARQUIVOS = (
     "baixar_xmls.py", "bling_auth.py", "organizar_xmls.py", "executar_diario.py",
     "agendador_docker.py", "preparar_instalacao.py", "integracao_dropbox.py",
     "registro_entregas.py", "transporte_dropbox.py", "instalar_rclone.py",
-    "configuracao_dropbox.example.json", "docs/diagnostico_debian.sh",
-    "docs/instalar_integracao_debian.sh", "docs/integracao_debian.md",
+    "recuperar_entregas_pendentes.py",
+    "configuracao_dropbox.example.json", "scripts/diagnostico_debian.sh",
+    "scripts/instalar_integracao_debian.sh", "scripts/diagnosticar_entregas_debian.py",
 )
 HISTORICO_PADRAO = "dados/integracao_dropbox/preparacao_ativacao_2026-10-29.json"
 
@@ -73,11 +74,20 @@ def gerar_pacote(raiz=BASE_DIR, destino=None, historico=None, cache_rclone=None)
     conteudos["bootstrap/ja_entregues.json"] = (json.dumps(seed, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     conteudos["LEIA-ME.txt"] = (
         "INTEGRACAO DROPBOX - DEBIAN - SOMENTE SIMULACAO\n"
-        "Leia docs/integracao_debian.md antes de instalar.\n"
-        "Credenciais .env, tokens.json e rclone.conf devem ser transferidas separadamente.\n"
-        "Execute bash docs/instalar_integracao_debian.sh no Debian.\n"
+        "Requisitos: Debian/Linux amd64, Docker Engine, Compose e internet.\n"
+        "Extraia em uma pasta nova e confira configuracao.json.\n"
+        "Transfira separadamente as credenciais atuais para .env, segredos/tokens.json\n"
+        "e segredos/rclone/rclone.conf. Mantenha somente uma instalacao ativa.\n"
+        "Preserve habilitada=false e modo=simulacao em configuracao_dropbox.json.\n"
+        "Se o arquivo nao existir, o instalador usa configuracao_dropbox.example.json.\n"
+        "Na raiz do pacote, execute bash scripts/diagnostico_debian.sh para consultar o sistema\n"
+        "e bash scripts/instalar_integracao_debian.sh para preparar a integracao.\n"
         "O instalador sobe apenas Redis e uma simulacao; nao inicia downloads ou uploads.\n"
-        "O bootstrap e uma fotografia antiga: reaudite cobertura e corte antes de ativar.\n"
+        "Confira docker compose ps e dados/logs/simulacao_instalacao.json.\n"
+        "Use sudo nos comandos Docker se a conta nao tiver acesso direto.\n"
+        "O bootstrap e uma fotografia de entregas: reaudite cobertura e corte antes de ativar.\n"
+        "Uma simulacao sem metadados locais pode estar vazia; confira o total analisado.\n"
+        "Ao atualizar, preserve dados/, segredos/, configuracoes e o volume redis-dados.\n"
     ).encode("utf-8")
     for wheel in wheels:
         conteudos["dependencias_docker/" + wheel.name] = wheel.read_bytes()

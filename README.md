@@ -20,6 +20,11 @@ O projeto pode operar em uma máquina Windows dedicada ou em um contêiner Docke
 6. Classifica o documento por CNPJ emitente, marketplace, data e UF.
 7. Registra a janela concluída para recuperar dias pendentes após uma interrupção.
 
+Na integração com o Dropbox, são aceitas as mesmas situações do download:
+**Emitida DANFE (5)** e **Autorizada (6)**, com validação do protocolo de autorização
+no XML. Entregas omitidas podem ser recuperadas a partir dos XMLs locais com
+`recuperar_entregas_pendentes.py`, descrito na seção de execução manual.
+
 ### Janela diária
 
 Cada execução processa as últimas 24 horas fechadas às 14h:
@@ -90,7 +95,7 @@ Para instalar sem perguntas, use `-PrimeiraData AAAA-MM-DD` ou `-UltimaJanela`.
 
 ### Docker
 
-Para a integração Dropbox no Debian, siga [docs/integracao_debian.md](docs/integracao_debian.md). O instalador prepara Redis e executa somente a simulação. Os perfis de download e entrega ficam parados nessa etapa.
+Para a integração Dropbox no Debian, o script [`scripts/instalar_integracao_debian.sh`](scripts/instalar_integracao_debian.sh) prepara Redis e executa somente a simulação. Os perfis de download e entrega ficam parados nessa etapa. Ele exige as credenciais atuais em `.env`, `segredos/tokens.json` e `segredos/rclone/rclone.conf`, além de um histórico de entregas conferidas em `dados/entregas/ja_entregues.json` ou `bootstrap/ja_entregues.json`. Execute `bash scripts/instalar_integracao_debian.sh` na raiz do projeto.
 
 Requisitos:
 
@@ -100,6 +105,7 @@ Requisitos:
 - acesso à internet para a API do Bling.
 
 Copie `configuracao.example.json` para `configuracao.json` e preencha os dados reais. Copie também `configuracao_dropbox.example.json` para `configuracao_dropbox.json`, mantendo `habilitada=false` e `modo=simulacao` durante a preparação. Coloque `.env` na raiz e `tokens.json` dentro de `segredos/`.
+Os CNPJs, IDs de canais e pastas no exemplo do Dropbox são fictícios. Substitua-os pelos dados da instalação somente em `configuracao_dropbox.json`, que é ignorado pelo Git.
 Na primeira instalação, a opção padrão começa pela última janela encerrada.
 Para recuperar desde outra data, acrescente `AUTOMACAO_PRIMEIRA_DATA=AAAA-MM-DD`
 ao `.env`, usando uma janela já encerrada. Em seguida:
@@ -201,6 +207,17 @@ A instalação salva a primeira janela em `configuracao_execucao.json`, separado
 do histórico de sucesso. O executor usa essa data até concluir a primeira janela;
 depois continua a partir de `estado_execucao.json`. Uma reinstalação preserva o
 progresso e não reinicia a recuperação de dias já concluídos.
+
+Para conferir entregas omitidas de uma janela já baixada, com Redis ativo na
+instalação Docker:
+
+```bash
+docker compose run --rm --no-deps entregas-dropbox python recuperar_entregas_pendentes.py AAAA-MM-DD
+```
+
+Substitua `AAAA-MM-DD` pela janela a conferir. O comando consulta os metadados no
+Bling e valida os XMLs locais. Sem `--aplicar`, apresenta somente o plano; com
+essa opção, registra as pendências para o trabalhador de entregas.
 
 ## Pacote da automação diária
 
@@ -307,6 +324,18 @@ No Docker, esses arquivos ficam dentro de `dados/`. Em uma instalação organiza
 
 O estado só avança depois que uma janela termina com sucesso. Se a máquina ficar desligada, a próxima execução processa as janelas pendentes em ordem e interrompe no primeiro erro.
 
+Os utilitários de diagnóstico ficam em `scripts/`. No Debian, execute
+`bash scripts/diagnostico_debian.sh` para consultar o sistema. Para conferir
+entregas com o serviço `entregas-dropbox` ativo, execute na raiz da instalação:
+
+```bash
+docker compose exec -T entregas-dropbox python - < scripts/diagnosticar_entregas_debian.py
+```
+
+Os dois diagnósticos fazem somente consultas, sem enviar arquivos nem alterar
+configurações ou registros no Redis. Use `sudo` nos comandos Docker se a conta
+não tiver acesso direto.
+
 ## Testes
 
 Execute os testes automatizados com:
@@ -325,6 +354,9 @@ python -m unittest discover -p "test_*.py" -v
 | `agendador_docker.py` | Agenda e repete execuções dentro do contêiner |
 | `preparar_instalacao.py` | Escolhe a primeira janela e valida o acesso ao Bling |
 | `empacotar_automacao.py` | Gera o pacote diário atualizado sem credenciais ou histórico |
+| `empacotar_debian.py` | Gera o pacote Debian em simulação com instruções genéricas |
+| `recuperar_entregas_pendentes.py` | Confere XMLs locais e recupera metadados de entregas omitidas |
+| `scripts/` | Instalador Debian e diagnósticos reutilizáveis |
 | `bling_auth.py` | Carrega e renova os tokens OAuth |
 | `autenticar_bling.py` | Realiza a autorização OAuth inicial |
 | `configuracao.example.json` | Modelo anonimizado da configuração de unidades, canais e intermediadores |

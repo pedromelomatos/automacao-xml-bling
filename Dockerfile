@@ -23,6 +23,7 @@ RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.t
 
 COPY baixar_xmls.py bling_auth.py organizar_xmls.py executar_diario.py agendador_docker.py preparar_instalacao.py ./
 COPY integracao_dropbox.py registro_entregas.py transporte_dropbox.py ./
+COPY recuperar_entregas_pendentes.py ./
 COPY configuracao.json ./
 COPY configuracao_dropbox.example.json ./configuracao_dropbox.json
 

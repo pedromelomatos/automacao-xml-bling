@@ -132,8 +132,19 @@ class DownloadEntregasTests(unittest.TestCase):
             self.assertFalse((contexto.root / "entregas").exists())
             contexto.organizar_xml.assert_called_once()
 
-    def test_situacao_5_e_nao_autorizadas_nao_geram_outbox(self):
-        for situacao in (5, 2, 9):
+    def test_situacao_5_recupera_xml_cached_e_registra_entrega(self):
+        with self.pipeline(nota={**NOTA, "situacao": 5}) as contexto:
+            path = contexto.root / "xml_originais/29-10-2026" / f"{CHAVE}.xml"
+            path.parent.mkdir(parents=True)
+            path.write_bytes(XML)
+            resultado = baixar_xmls.processar_download(DIA, janela_14h=True)
+            contexto.baixar_xml.assert_not_called()
+            registro = json.loads((contexto.root / "entregas/metadados" / f"{CHAVE}.json").read_text())
+            self.assertEqual(registro["situacao_bling"], "5")
+            self.assertEqual((resultado.existentes, resultado.codigo_saida), (1, 0))
+
+    def test_demais_situacoes_nao_geram_outbox(self):
+        for situacao in (2, 9):
             with self.subTest(situacao=situacao), self.pipeline(nota={**NOTA, "situacao": situacao}) as contexto:
                 resultado = baixar_xmls.processar_download(DIA, janela_14h=True)
                 self.assertEqual(resultado.codigo_saida, 0)

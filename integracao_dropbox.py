@@ -15,6 +15,8 @@ from xml.etree import ElementTree as ET
 
 BASE_DIR = Path(__file__).resolve().parent
 NS = {"n": "http://www.portalfiscal.inf.br/nfe"}
+# Mesmas situações aceitas pelo download diário. O protocolo do XML também é validado.
+SITUACOES_ENTREGA = frozenset({"5", "6"})
 
 
 def pasta_dados():
@@ -208,7 +210,7 @@ def planejar(cfg, registros, inventario, historico=(), estados=()):
             decision = "ja_entregue" if previous["estado"] == "entregue" else "revisao"
         elif not route:
             decision = "rota_desconhecida"
-        elif str(row.get("situacao_bling")) != "6":
+        elif str(row.get("situacao_bling")) not in SITUACOES_ENTREGA:
             decision = "situacao_nao_autorizada"
         else:
             try:
