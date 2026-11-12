@@ -1,14 +1,22 @@
 # Automação de XML de NF-e do Bling
 
-Automação em Python para consultar as NF-e emitidas no Bling, baixar os XMLs autorizados e organizá-los em pastas por unidade, marketplace, data de emissão e UF de destino.
+Automação em Python para consultar NF-e no Bling, preservar e organizar os XMLs autorizados e entregar os documentos ao Dropbox. A rotina pode funcionar em uma máquina Windows dedicada ou em um servidor Debian com Docker Compose, rclone e Redis.
 
-Este é um projeto real, desenvolvido para ser utilizado em produção na empresa onde trabalho e atender uma necessidade operacional diária.
+O projeto nasceu de uma necessidade operacional diária e é utilizado em produção. Este README apresenta a arquitetura e os procedimentos reutilizáveis; configurações reais, credenciais, documentos fiscais e detalhes da infraestrutura ficam fora da documentação pública.
+
+- **Coleta e organização:** consulta por janela de emissão, cópia original e classificação por unidade, marketplace, data e UF.
+- **Execução automática:** agendamento diário e recuperação das janelas pendentes após interrupções.
+- **Entrega na nuvem:** trabalhador independente, envio por rclone e conferência do inventário remoto.
+- **Controle persistente:** Redis mantém estados, tentativas, eventos e bloqueio entre execuções.
+- **Uso manual:** aplicativo Windows com acompanhamento da consulta e geração de ZIPs para o fluxo de GNRE.
+
+[Fluxo](#fluxo-da-automação) · [Integração com a nuvem](#integração-com-a-nuvem-rclone-e-redis) · [Instalação](#formas-de-instalação) · [Execução manual](#execução-manual) · [Acompanhamento](#logs-e-acompanhamento) · [Segurança](#segurança)
 
 ![Interface do aplicativo Automação XML Bling](docs/images/interface-aplicativo.png)
 
 Interface da versão atualizada do executável, antes de iniciar uma consulta.
 
-O projeto pode operar em uma máquina Windows dedicada ou em um contêiner Docker. Nos dois modos, a execução diária ocorre às **14h10**, considerando a janela encerrada às **14h**.
+A execução diária ocorre às **14h10**, considerando a janela encerrada às **14h**, no fuso `America/Sao_Paulo`.
 
 ## Fluxo da automação
 
@@ -18,12 +26,22 @@ O projeto pode operar em uma máquina Windows dedicada ou em um contêiner Docke
 4. Baixa o XML pela chave de acesso.
 5. Preserva uma cópia original.
 6. Classifica o documento por CNPJ emitente, marketplace, data e UF.
-7. Registra a janela concluída para recuperar dias pendentes após uma interrupção.
+7. Quando a configuração Dropbox está presente, grava metadados locais para a entrega posterior.
+8. Registra a janela concluída para recuperar dias pendentes após uma interrupção.
+9. Com a integração habilitada, um trabalhador separado confere as pendências e envia os XMLs ao Dropbox.
 
-Na integração com o Dropbox, são aceitas as mesmas situações do download:
-**Emitida DANFE (5)** e **Autorizada (6)**, com validação do protocolo de autorização
-no XML. Entregas omitidas podem ser recuperadas a partir dos XMLs locais com
-`recuperar_entregas_pendentes.py`, descrito na seção de execução manual.
+```mermaid
+flowchart LR
+    A[API do Bling] --> B[Download e classificação]
+    B --> C[XMLs originais e organizados]
+    B --> D[Metadados locais de entrega]
+    D --> E[Trabalhador de entregas]
+    E <--> F[Redis: estados e bloqueio]
+    E --> G[rclone]
+    G --> H[Dropbox]
+```
+
+O download e a entrega têm controles separados. Uma janela concluída indica que a coleta terminou com sucesso; as entregas continuam sendo acompanhadas individualmente no Redis. O trabalhador pode escoar pendências mesmo sem uma nova janela de download.
 
 ### Janela diária
 
@@ -60,6 +78,75 @@ xml_originais/DD-MM-AAAA/
 
 As unidades, os canais do Bling, os CNPJs dos intermediadores e as UFs que exigem GNRE são mapeados no arquivo local `configuracao.json`. Use [`configuracao.example.json`](configuracao.example.json) como modelo; a configuração real não deve ser enviada ao repositório.
 
+## Integração com a nuvem: rclone e Redis
+
+A integração implementada usa **Dropbox como destino**, **rclone para transportar os XMLs** e **Redis para persistir o controle de entregas**. No Debian, o Docker Compose coordena Redis, coleta e entrega; Python e rclone já fazem parte da imagem da automação.
+
+### Da coleta à entrega
+
+Quando existe `configuracao_dropbox.json`, o download grava um JSON por chave de NF-e em `dados/entregas/metadados/`. Esse registro contém a referência ao XML local, emitente, canal do Bling, situação, emissão e hash SHA-256. A gravação é atômica e os caminhos são relativos à pasta de dados, permitindo preservar as referências ao migrar a instalação.
+
+O trabalhador cruza esses metadados com o histórico inicial de entregas, os estados do Redis e uma listagem atual do Dropbox. Somente notas nas situações **Emitida DANFE (5)** ou **Autorizada (6)**, dentro do corte de emissão e com rota conhecida podem ser selecionadas. O XML precisa conter a NF-e e seu protocolo de autorização compatível com a chave.
+
+As rotas são definidas pela combinação **CNPJ emitente + ID do canal no Bling**. A estrutura remota é independente das pastas locais por data e UF. Exemplo fictício de destino:
+
+```text
+Filial_Ecommerce/Canal_Exemplo_1/CHAVE_DA_NFE-nfe.xml
+```
+
+### Papel do rclone
+
+O rclone usa um `remote` autorizado, configurado em `segredos/rclone/rclone.conf`. O trabalhador lista os XMLs para identificar chaves já presentes e repete a consulta antes de cada envio. A conferência também reconhece arquivos na subpasta `XML Importados` da rota esperada. Uma chave encontrada em outra rota exige revisão.
+
+Cada transferência usa `rclone copyto --immutable`, com um arquivo por vez e sem retentativas automáticas adicionais configuradas pelo projeto. Antes de iniciar, a aplicação confere o SHA-256 e congela uma cópia dos bytes validados. A integração não executa espelhamento, movimentação nem exclusão remota.
+
+O sucesso do rclone confirma a transferência para o Dropbox. O processamento posterior do documento por outro sistema tem seu próprio fluxo e não é confirmado por esta automação.
+
+### O que fica salvo no Redis
+
+Os XMLs continuam no sistema de arquivos e no Dropbox. O Redis guarda o registro de cada entrega pela chave de acesso, incluindo destino, hash, emitente, canal, estado, tentativas, horários e evidências de conclusão. Também mantém um índice das notas e um stream de eventos das alterações de estado.
+
+| Estado | Significado |
+|---|---|
+| `pendente` | Entrega cadastrada, aguardando seleção e validações |
+| `em_envio` | Tentativa registrada antes de iniciar a transferência |
+| `entregue` | Transferência concluída ou entrega preexistente reconhecida por evidência |
+| `falha` | Falha registrada; uma nova tentativa depende das validações do ciclo |
+| `incerto` | Envio sem confirmação ou interrompido; exige conciliação antes de repetir |
+| `revisao` | Divergência de identidade, conteúdo ou destino; exige análise |
+
+Um bloqueio com prazo de validade impede dois trabalhadores de processarem entregas simultaneamente. As alterações de registro, índice e evento usam transações Redis. O instante do próximo lote também é persistido, para que um reinício não elimine a espera configurada. O exemplo trabalha com **até cinco arquivos por lote**, com **60 segundos de intervalo**; o código limita cada lote a cinco.
+
+Os registros das notas não expiram automaticamente. No Compose, o Redis usa o volume `redis-dados`, AOF com sincronização `everysec` e política `noeviction`, que impede o descarte automático de registros ao atingir o limite de memória, sem publicar a porta no host. Se o controle ficar indisponível ou inconsistente, novos envios são suspensos.
+
+Essa persistência precisa de backup. AOF `everysec` admite a perda de gravações recentes em uma queda abrupta, e não existe transação única entre Redis e Dropbox. Por isso, um resultado incerto não é reenviado automaticamente: após uma interrupção, registros que ficaram em `em_envio` passam a `incerto` para conciliação. O objetivo é evitar duplicidades sem presumir que uma falha de conexão significa que o arquivo não chegou.
+
+### Configuração e simulação
+
+Use [`configuracao_dropbox.example.json`](configuracao_dropbox.example.json) como referência. Os CNPJs, canais e pastas desse arquivo são fictícios.
+
+| Campo | Função |
+|---|---|
+| `habilitada` e `modo` | Mantêm o envio bloqueado com `false` e `simulacao`; o envio real exige `true` e `envio` |
+| `inicio_emissao` | Corte mínimo de emissão, com fuso; deve ser escolhido para cada instalação |
+| `rotas` | Mapeamento de emitente e canal para a pasta remota |
+| `remote` e `rclone_config` | Remote autorizado e caminho da configuração do rclone |
+| `redis_url` e `redis_prefixo` | Conexão e prefixo dos registros de entrega |
+| `max_por_lote` e `intervalo_lotes_segundos` | Limite de arquivos e espera entre lotes |
+| `historico_inicial` | Arquivo das entregas já conferidas, relativo à pasta de dados |
+
+O corte `inicio_emissao` filtra as entregas. A primeira janela de download é escolhida separadamente por `AUTOMACAO_PRIMEIRA_DATA` ou pelo instalador.
+
+Antes de habilitar envios, confira o histórico inicial, as rotas e a cobertura dos metadados. O histórico deve existir mesmo quando não há entregas anteriores; nesse caso, seu conteúdo pode ser `{"notas": []}`. Ele registra entregas conhecidas, sem substituir a consulta atual ao Dropbox.
+
+Com Redis iniciado e a imagem preparada, execute na raiz da instalação:
+
+```bash
+docker compose run --rm --no-deps entregas-dropbox python integracao_dropbox.py simular --saida /dados/logs/simulacao_dropbox.json
+```
+
+O comando lê os arquivos locais, o Redis e o inventário remoto, e salva um relatório com decisões e lotes. Não envia XMLs nem altera registros Redis, mesmo que a configuração esteja em modo de envio. Sem metadados locais, o relatório pode ficar vazio; isso não valida a cobertura das notas. As consultas ao Dropbox podem renovar a autorização do rclone, por isso seu diretório de configuração precisa permitir escrita.
+
 ## Formas de instalação
 
 Use apenas **uma** forma de execução por vez. Duas instalações ativas podem tentar renovar os mesmos tokens e processar a mesma janela simultaneamente.
@@ -93,19 +180,45 @@ Para validar sem criar tarefa ou salvar a escolha, execute
 `powershell -NoProfile -ExecutionPolicy Bypass -File instalar_automacao.ps1 -ValidarSomente`.
 Para instalar sem perguntas, use `-PrimeiraData AAAA-MM-DD` ou `-UltimaJanela`.
 
-### Docker
+### Debian com Docker Compose
 
-Para a integração Dropbox no Debian, o script [`scripts/instalar_integracao_debian.sh`](scripts/instalar_integracao_debian.sh) prepara Redis e executa somente a simulação. Os perfis de download e entrega ficam parados nessa etapa. Ele exige as credenciais atuais em `.env`, `segredos/tokens.json` e `segredos/rclone/rclone.conf`, além de um histórico de entregas conferidas em `dados/entregas/ja_entregues.json` ou `bootstrap/ja_entregues.json`. Execute `bash scripts/instalar_integracao_debian.sh` na raiz do projeto.
+O Debian hospeda os contêineres e preserva dados e credenciais em diretórios locais. Não é necessário instalar Python, Redis ou rclone separadamente no host para a rotina principal.
 
 Requisitos:
 
-- Docker Engine ou Docker Desktop;
-- Docker Compose;
+- Docker Engine e Docker Compose;
 - arquitetura `amd64`;
-- acesso à internet para a API do Bling.
+- fuso `America/Sao_Paulo`;
+- acesso à internet para Bling, Dropbox e preparação das imagens.
 
-Copie `configuracao.example.json` para `configuracao.json` e preencha os dados reais. Copie também `configuracao_dropbox.example.json` para `configuracao_dropbox.json`, mantendo `habilitada=false` e `modo=simulacao` durante a preparação. Coloque `.env` na raiz e `tokens.json` dentro de `segredos/`.
-Os CNPJs, IDs de canais e pastas no exemplo do Dropbox são fictícios. Substitua-os pelos dados da instalação somente em `configuracao_dropbox.json`, que é ignorado pelo Git.
+O Compose também pode ser utilizado com Docker Desktop em uma máquina compatível.
+
+| Serviço | Perfil | Responsabilidade |
+|---|---|---|
+| `redis` | Sem perfil | Persiste o controle das entregas; inicia sem ativar a rotina |
+| `automacao-xml-bling` | `download` | Recupera janelas pendentes e agenda a coleta diária |
+| `entregas-dropbox` | `entrega` | Verifica e processa entregas independentemente do download |
+
+#### Preparação no Debian
+
+Em uma instalação nova:
+
+1. Copie `configuracao.example.json` para `configuracao.json` e preencha unidades e canais.
+2. Copie `configuracao_dropbox.example.json` para `configuracao_dropbox.json`; ajuste corte e rotas, mantendo `habilitada=false` e `modo=simulacao`.
+3. Transfira por um meio seguro as credenciais atuais para `.env`, `segredos/tokens.json` e `segredos/rclone/rclone.conf`.
+4. Forneça o histórico conferido em `dados/entregas/ja_entregues.json` ou `bootstrap/ja_entregues.json`.
+5. Execute o instalador na raiz do projeto:
+
+```bash
+bash scripts/instalar_integracao_debian.sh
+```
+
+O script confere Docker e arquitetura, restringe permissões dos segredos, constrói a imagem, inicia somente Redis e executa a simulação. O relatório fica em `dados/logs/simulacao_instalacao.json`. Ele preserva arquivos existentes e interrompe a preparação se os serviços de download ou entrega já estiverem ativos. O rclone é incluído na imagem com checksum SHA-256 verificado.
+
+Os perfis `download` e `entrega` ficam parados nessa etapa. A simulação consulta o histórico inicial, mas não o importa para Redis nem registra entregas reais.
+
+#### Iniciar a rotina
+
 Na primeira instalação, a opção padrão começa pela última janela encerrada.
 Para recuperar desde outra data, acrescente `AUTOMACAO_PRIMEIRA_DATA=AAAA-MM-DD`
 ao `.env`, usando uma janela já encerrada. Em seguida:
@@ -122,7 +235,13 @@ docker compose logs -f automacao-xml-bling
 
 O contêiner inicia junto com o Docker, verifica dias pendentes e agenda as próximas execuções para as 14h10 no fuso `America/Sao_Paulo`.
 
-Sem perfis, o Compose inicia somente Redis. O trabalhador de entregas é um serviço separado, no perfil `entrega`; ele não depende de haver novas janelas de download. A configuração de exemplo bloqueia uploads. O rclone é incluído na imagem com checksum verificado; Redis usa volume persistente, AOF e política sem descarte de registros.
+Para ativar também as entregas, confira primeiro a simulação, o histórico e as rotas. Então defina `habilitada=true` e `modo=envio` na configuração local e inicie o serviço:
+
+```bash
+docker compose --profile entrega up -d entregas-dropbox
+```
+
+Iniciar o serviço com a configuração de exemplo mantém os uploads bloqueados. Sem perfis, `docker compose up -d` inicia somente Redis.
 
 Antes de iniciar downloads e agendamento, o contêiner valida a configuração e o
 acesso às NF-e no Bling. Se houver falha, ele termina sem avançar o estado; a
@@ -136,12 +255,38 @@ Comandos úteis:
 # Ver as janelas pendentes sem baixar ou alterar o estado
 docker compose exec automacao-xml-bling python executar_diario.py --simular
 
-# Reiniciar
+# Reiniciar os serviços existentes
 docker compose restart
 
-# Parar
+# Parar preservando o volume Redis e os dados locais
 docker compose down
 ```
+
+Ao atualizar ou migrar, preserve `dados/`, `segredos/`, as configurações locais e o volume `redis-dados`. `docker compose down -v` remove os volumes e não deve ser usado quando houver histórico a preservar. A pasta do rclone e o arquivo de tokens precisam permitir a persistência das renovações de autorização.
+
+### Certificado e consulta GNRE no Debian
+
+Para ensaiar a instalação do certificado GNRE no Debian, execute
+`python3 scripts/instalar_certificado_gnre.py --ensaio` no terminal. O script
+requer OpenSSL 3 e procura um PFX fictício em uma pasta Downloads temporária.
+A senha do PFX fictício é `gnre-teste-123`. As perguntas são as mesmas da
+instalação real, e a última linha identifica o ensaio.
+O modo `--instalar` procura arquivos PFX ou P12 em `~/Downloads` e nas
+subpastas. Pressione Enter se houver apenas um ou selecione pelo número da
+lista se houver vários. O instalador pede a senha no terminal e grava a
+identidade em `~/.local/share/automacao-xml-bling/gnre/identidade.pem`.
+Execute como o usuário da automação, sem `sudo`. A chave PEM fica sem senha e
+o acesso é restrito pelas permissões no Debian.
+
+Depois da instalação, execute `bash scripts/testar_gnre_debian.sh` como o mesmo
+usuário. O Compose separado `docker-compose.gnre.yml` usa a imagem já instalada
+`automacao-xml-bling:2.0-dropbox` e monta a pasta do certificado somente no serviço
+`gnre`, em modo de leitura. O contêiner usa o UID e o GID do usuário no Debian.
+O teste consulta `GnreConfigUF` em produção, para MS e receita 100102.
+Use `--ambiente homologacao`, `--uf AL` ou `--receita 100129` para mudar a
+consulta, ou `--somente-certificado` para conferir somente a leitura da credencial.
+O cliente obtém o contrato SOAP 1.2 pelo WSDL oficial e verifica o retorno 450.
+A emissão das guias continua sendo uma etapa futura da integração.
 
 ## Configuração do Bling
 
@@ -311,7 +456,7 @@ logs e resultados ficam em `Documentos\Automacao XML Bling`.
 
 ## Logs e acompanhamento
 
-Os principais arquivos de acompanhamento são:
+Na instalação Docker, os principais arquivos ficam em `dados/`:
 
 | Arquivo | Conteúdo |
 |---|---|
@@ -319,10 +464,23 @@ Os principais arquivos de acompanhamento são:
 | `logs/automacao_AAAA-MM-DD_14h.log` | Resultado detalhado de cada janela |
 | `estado_execucao.json` | Última janela concluída e data da atualização |
 | `configuracao_execucao.json` | Primeira janela escolhida na instalação |
+| `entregas/metadados/` | Referência ao XML, emitente, canal e hash de cada NF-e |
+| `entregas/ja_entregues.json` | Histórico inicial conferido, usado na conciliação |
+| `logs/simulacao_instalacao.json` | Plano produzido durante a preparação Debian |
 
-No Docker, esses arquivos ficam dentro de `dados/`. Em uma instalação organizada para Windows, também podem ficar na pasta compartilhada `dados/`.
+O controle das entregas fica no volume Redis, separado desses arquivos. Em uma instalação organizada para Windows, os arquivos da rotina diária também podem ficar na pasta compartilhada `dados/`.
 
 O estado só avança depois que uma janela termina com sucesso. Se a máquina ficar desligada, a próxima execução processa as janelas pendentes em ordem e interrompe no primeiro erro.
+
+Para acompanhar os serviços e consultar os estados das entregas:
+
+```bash
+docker compose ps
+docker compose logs --tail=100 entregas-dropbox
+docker compose run --rm --no-deps entregas-dropbox python integracao_dropbox.py status
+```
+
+O comando `status` faz somente leitura do Redis e apresenta um resumo por estado, seguido dos registros das notas. Sua saída contém metadados fiscais e deve ser tratada como informação privada.
 
 Os utilitários de diagnóstico ficam em `scripts/`. No Debian, execute
 `bash scripts/diagnostico_debian.sh` para consultar o sistema. Para conferir
@@ -344,6 +502,8 @@ Execute os testes automatizados com:
 python -m unittest discover -p "test_*.py" -v
 ```
 
+Os testes da integração cobrem planejamento, bloqueio de uploads na simulação, conferência de XML e hash, concorrência, intervalo entre lotes e retomada de envios incertos. Os cenários Redis usam `fakeredis`, dependência de desenvolvimento opcional; instale-a com `python -m pip install fakeredis` para executar também esses testes, que são ignorados quando ela está ausente. Não é necessário acessar um Dropbox real para esses cenários.
+
 ## Principais arquivos
 
 | Arquivo | Função |
@@ -352,6 +512,11 @@ python -m unittest discover -p "test_*.py" -v
 | `organizar_xmls.py` | Classifica os XMLs na estrutura de pastas |
 | `executar_diario.py` | Controla estado, pendências e execução exclusiva |
 | `agendador_docker.py` | Agenda e repete execuções dentro do contêiner |
+| `integracao_dropbox.py` | Grava metadados, planeja entregas e executa o trabalhador |
+| `registro_entregas.py` | Persiste estados e eventos, controla bloqueio e intervalo no Redis |
+| `transporte_dropbox.py` | Lista XMLs remotos e transfere arquivos validados pelo rclone |
+| `instalar_rclone.py` | Prepara o binário rclone com verificação de integridade |
+| `docker-compose.yml` | Coordena Redis, download e entrega em serviços separados |
 | `preparar_instalacao.py` | Escolhe a primeira janela e valida o acesso ao Bling |
 | `empacotar_automacao.py` | Gera o pacote diário atualizado sem credenciais ou histórico |
 | `empacotar_debian.py` | Gera o pacote Debian em simulação com instruções genéricas |
@@ -360,10 +525,14 @@ python -m unittest discover -p "test_*.py" -v
 | `bling_auth.py` | Carrega e renova os tokens OAuth |
 | `autenticar_bling.py` | Realiza a autorização OAuth inicial |
 | `configuracao.example.json` | Modelo anonimizado da configuração de unidades, canais e intermediadores |
+| `configuracao_dropbox.example.json` | Modelo fictício de rotas, corte, conexão e limites de entrega |
 
 ## Segurança
 
-- Não registre credenciais em código ou documentação.
-- Não envie `.env`, `tokens.json`, XMLs ou logs ao repositório.
+- Mantenha exemplos públicos fictícios, sem CNPJs reais, nomes internos, endereços de servidores ou caminhos da operação.
+- Não envie `.env`, `tokens.json`, `rclone.conf`, certificados ou configurações reais ao repositório.
+- XMLs, metadados, históricos, logs e relatórios podem conter dados fiscais e operacionais; mantenha-os privados, inclusive ao compartilhar diagnósticos.
 - Mantenha somente uma instalação ativa.
 - Restrinja o acesso às pastas de dados e segredos na máquina de execução.
+- Preserve backups dos dados e do Redis; imagens Docker e pacotes de código não substituem o histórico de entregas.
+- Os pacotes gerados podem conter configuração local e, no pacote Debian, histórico inicial de NF-e. Revise seu conteúdo e use um meio de distribuição privado.

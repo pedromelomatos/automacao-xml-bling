@@ -21,6 +21,8 @@ ARQUIVOS = (
     "recuperar_entregas_pendentes.py",
     "configuracao_dropbox.example.json", "scripts/diagnostico_debian.sh",
     "scripts/instalar_integracao_debian.sh", "scripts/diagnosticar_entregas_debian.py",
+    "scripts/instalar_certificado_gnre.py",
+    "docker-compose.gnre.yml", "consultar_gnre.py", "scripts/testar_gnre_debian.sh",
 )
 HISTORICO_PADRAO = "dados/integracao_dropbox/preparacao_ativacao_2026-10-29.json"
 
@@ -82,6 +84,8 @@ def gerar_pacote(raiz=BASE_DIR, destino=None, historico=None, cache_rclone=None)
         "Se o arquivo nao existir, o instalador usa configuracao_dropbox.example.json.\n"
         "Na raiz do pacote, execute bash scripts/diagnostico_debian.sh para consultar o sistema\n"
         "e bash scripts/instalar_integracao_debian.sh para preparar a integracao.\n"
+        "Para ensaiar o cadastro do certificado GNRE, execute\n"
+        "python3 scripts/instalar_certificado_gnre.py --ensaio (requer OpenSSL 3).\n"
         "O instalador sobe apenas Redis e uma simulacao; nao inicia downloads ou uploads.\n"
         "Confira docker compose ps e dados/logs/simulacao_instalacao.json.\n"
         "Use sudo nos comandos Docker se a conta nao tiver acesso direto.\n"
