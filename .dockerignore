@@ -1,6 +1,15 @@
 *
 !.dockerignore
 !Dockerfile
+!Dockerfile.gnre
+!consultar_gnre.py
+!preparar_gnre.py
+!emitir_gnre.py
+!schemas/
+!schemas/gnre/
+!schemas/gnre/*.xsd
+!dependencias_gnre/
+!dependencias_gnre/*.whl
 !requirements.txt
 !dependencias_docker/
 !dependencias_docker/*.whl

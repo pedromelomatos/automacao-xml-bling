@@ -1,4 +1,38 @@
 services:
+  gnre-emissao:
+    build:
+      context: .
+      dockerfile: Dockerfile.gnre
+    image: automacao-gnre:0.1
+    pull_policy: never
+    restart: "no"
+    user: "${GNRE_UID:?Informe GNRE_UID}:${GNRE_GID:?Informe GNRE_GID}"
+    working_dir: /app
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - type: bind
+        source: ./entrada
+        target: /entrada
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./dados-gnre
+        target: /dados/gnre
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${GNRE_CERT_DIR:?Informe GNRE_CERT_DIR}
+        target: /run/gnre
+        read_only: true
+        bind:
+          create_host_path: false
+
   gnre:
     image: automacao-xml-bling:2.0-dropbox
     pull_policy: never

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from instalar_rclone import NOME_ARQUIVO, preparar_cache
+from empacotar_gnre import ARQUIVOS as ARQUIVOS_GNRE
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -22,7 +23,7 @@ ARQUIVOS = (
     "configuracao_dropbox.example.json", "scripts/diagnostico_debian.sh",
     "scripts/instalar_integracao_debian.sh", "scripts/diagnosticar_entregas_debian.py",
     "scripts/instalar_certificado_gnre.py",
-    "docker-compose.gnre.yml", "consultar_gnre.py", "scripts/testar_gnre_debian.sh",
+    "empacotar_gnre.py", *ARQUIVOS_GNRE,
 )
 HISTORICO_PADRAO = "dados/integracao_dropbox/preparacao_ativacao_2026-10-29.json"
 
@@ -95,6 +96,11 @@ def gerar_pacote(raiz=BASE_DIR, destino=None, historico=None, cache_rclone=None)
     ).encode("utf-8")
     for wheel in wheels:
         conteudos["dependencias_docker/" + wheel.name] = wheel.read_bytes()
+    wheels_gnre = list((raiz / "dependencias_gnre").glob("lxml-6.1.3-cp314-cp314-*x86_64.whl"))
+    if len(wheels_gnre) != 1:
+        raise RuntimeError("Dependência lxml da imagem GNRE ausente ou ambígua.")
+    for wheel in wheels_gnre:
+        conteudos["dependencias_gnre/" + wheel.name] = wheel.read_bytes()
     conteudos["dependencias_docker/rclone/" + NOME_ARQUIVO] = arquivo_rclone.read_bytes()
     conteudos["dependencias_docker/rclone/SHA256SUMS"] = checksums.read_bytes()
     manifesto = {"gerado_em_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),

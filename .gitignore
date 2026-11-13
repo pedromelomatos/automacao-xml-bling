@@ -9,12 +9,14 @@
 
 # Dados gerados pela automacao
 /dados/
+/dados-gnre/
 /logs/
 /xml/
 /xml_originais/
 /xml_por_cnpj/
 /xml_por_marketplace/
 /xml_teste/
+/output/pdf/
 /GNRE - ZIP/
 /gnre/
 *.xml
@@ -53,6 +55,7 @@ configuracao_execucao.json
 /INSTRUCOES_APLICATIVO.txt
 
 # Documentacao interna mantida somente no computador
+/AGENTS.md
 /PLANO_INTEGRACAO_DROPBOX_REDIS.md
 /RETOMADA_INTEGRACAO_DROPBOX.md
 /docs/*

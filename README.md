@@ -286,7 +286,54 @@ O teste consulta `GnreConfigUF` em produção, para MS e receita 100102.
 Use `--ambiente homologacao`, `--uf AL` ou `--receita 100129` para mudar a
 consulta, ou `--somente-certificado` para conferir somente a leitura da credencial.
 O cliente obtém o contrato SOAP 1.2 pelo WSDL oficial e verifica o retorno 450.
-A emissão das guias continua sendo uma etapa futura da integração.
+Cada etapa informa seu andamento e repete uma vez em caso de timeout ou HTTP
+502, 503 e 504. O limite
+de espera padrão é 90 segundos por operação HTTPS. Use `--timeout 120` para ampliar.
+O envio e o acompanhamento de lotes ficam no serviço `gnre-emissao`, com
+homologação como ambiente padrão. A ativação em produção depende da validação
+desse fluxo e dos parâmetros fiscais.
+Para investigar falhas de comunicação, acrescente `--diagnostico`. Esse modo
+mostra o contrato WSDL, o XML da consulta, o tempo da requisição e uma parte do
+corpo de respostas HTTP de erro.
+
+### Preparação e emissão GNRE em homologação
+
+Gere o pacote com `python empacotar_gnre.py --xml-amostra CAMINHO_DA_NFE.xml`.
+O ZIP `dist/GNRE-Homologacao-Debian.zip` contém o cliente, os XSDs públicos
+obtidos do repositório ACBr e o wheel Linux do lxml 6.1.3. A imagem
+`automacao-gnre:0.1` é construída sobre a imagem já instalada da automação.
+Extraia o pacote em uma pasta dedicada no Debian, como `~/gnre-emissao`.
+
+O comando abaixo prepara uma guia por valor positivo de DIFAL/FCP, consulta
+os parâmetros da UF, valida o lote por XSD, transmite e acompanha seu recibo.
+Informe as datas da guia explicitamente.
+
+```bash
+bash ~/gnre-emissao/scripts/executar_gnre_debian.sh executar \
+  --xml /entrada/nota-homologacao.xml \
+  --vencimento AAAA-MM-DD --pagamento AAAA-MM-DD
+```
+
+Os XMLs, o resumo e o PDF do lote ficam em
+`~/gnre-emissao/dados-gnre/homologacao/CNPJ/DATA/IDENTIFICADOR/`.
+O registro SQLite em `dados-gnre/controle.sqlite3` evita novos envios da
+mesma NF-e e receita, incluindo tentativas que terminem com resposta incerta.
+Preserve esse registro e os recibos ao atualizar a instalação.
+O comando retorna código 2 quando há processamento pendente. Para retomar,
+use `bash scripts/executar_gnre_debian.sh consultar --lote-id IDENTIFICADOR`.
+
+Este fluxo inicial atende guias simples de DIFAL e FCP do DIFAL. Os valores
+principais são lidos da NF-e, com conferência dos totais contra os itens.
+Para PR e receita 100102, o documento de origem usa o número da NF-e no tipo
+10, com a chave de acesso no campo adicional 66, conforme o catálogo da UF.
+O controle de duplicidade e a conferência do retorno usam a chave completa.
+Os documentos por chave admitem os tipos 22 (NF-e) e 24 (DFe), conforme o
+catálogo da UF. Campos adicionais restritos ao XML 1.00 são omitidos no XML 2.00.
+O produto preferido e a alternativa reproduzem as categorias informadas para
+o GuiasGNRE. Regras de UF sem mapeamento, ST, FCP integrado, convênio obrigatório
+e valor total obrigatório interrompem a preparação para revisão.
+O envio em produção exige os argumentos globais
+`--ambiente producao --confirmar-producao` antes de `executar` ou `enviar`.
 
 ## Configuração do Bling
 

@@ -64,6 +64,8 @@ class DebianPacoteTests(unittest.TestCase):
         config.update(habilitada=True, modo="envio")
         (root / "configuracao_dropbox.example.json").write_text(json.dumps(config), encoding="utf-8")
         (root / "dependencias_docker").mkdir()
+        (root / "dependencias_gnre").mkdir()
+        (root / "dependencias_gnre/lxml-6.1.3-cp314-cp314-manylinux_2_28_x86_64.whl").write_bytes(b"wheel-gnre-teste")
         (root / "dependencias_docker/redis-6.4.0-py3-none-any.whl").write_bytes(b"wheel-teste")
         (root / "dependencias_docker/tokens.json").write_text("SEGREDO-NAO-EMPACOTAR", encoding="utf-8")
         (root / "docs").mkdir()

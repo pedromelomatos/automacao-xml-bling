@@ -1,0 +1,10 @@
+FROM automacao-xml-bling:2.0-dropbox
+
+COPY dependencias_gnre/ /wheels-gnre/
+RUN pip install --no-cache-dir --no-index --find-links=/wheels-gnre lxml==6.1.3 && rm -rf /wheels-gnre
+
+WORKDIR /app
+COPY consultar_gnre.py preparar_gnre.py emitir_gnre.py organizar_xmls.py ./
+COPY schemas/gnre/ ./schemas/gnre/
+
+CMD ["python", "emitir_gnre.py", "--help"]
