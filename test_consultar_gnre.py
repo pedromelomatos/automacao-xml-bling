@@ -31,6 +31,13 @@ def resposta(codigo="450", ambiente="1", uf="MS", escapada=False):
 
 
 class ConsultaGnreTests(unittest.TestCase):
+    def test_retry_after_segundos_ou_data_http(self):
+        self.assertEqual(gnre.espera_http('900'), 900)
+        self.assertEqual(gnre.espera_http(None), 0)
+        self.assertEqual(gnre.espera_http('invalido'), 0)
+        with patch.object(gnre.time, 'time', return_value=0):
+            self.assertEqual(gnre.espera_http('Thu, 01 Jan 1970 00:15:00 GMT'), 900)
+
     def test_consulta_usa_contrato_wsdl_e_somente_dados_da_uf(self):
         namespace, acao = gnre.contrato_consulta(CONTRATO)
         self.assertEqual(acao, NAMESPACE + "/consultar")

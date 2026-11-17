@@ -5,6 +5,10 @@
 !consultar_gnre.py
 !preparar_gnre.py
 !emitir_gnre.py
+!conferir_retorno_gnre.py
+!controle_producao_gnre.py
+!conferir_pagamento_gnre.py
+!operacao_gnre.py
 !schemas/
 !schemas/gnre/
 !schemas/gnre/*.xsd

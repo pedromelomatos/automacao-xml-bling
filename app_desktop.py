@@ -63,6 +63,7 @@ DESCRICOES_MODO = {
     "com_gnre": "Organiza os XMLs das NF-e e cria cópias adicionais para o fluxo de GNRE.",
     "sem_gnre": "Organiza os XMLs das NF-e por unidade, marketplace, data e UF.",
     "somente_gnre_zip": "Separa os XMLs destinados à GNRE em um ZIP por unidade. Não emite guias de pagamento.",
+    "emitir_gnre": "Baixa os XMLs e abre a prévia de emissão no Debian. Você confere as notas antes de confirmar.",
 }
 
 
@@ -295,6 +296,7 @@ class Aplicacao(tk.Tk):
             ("com_gnre", "NF-e organizadas + pasta GNRE"),
             ("sem_gnre", "Somente NF-e organizadas"),
             ("somente_gnre_zip", "XMLs de GNRE em ZIP por unidade"),
+            ("emitir_gnre", "Emitir guias GNRE pelo Debian"),
         ):
             radio = ttk.Radiobutton(
                 radios, text=titulo, variable=self.modo_var, value=modo,
@@ -393,6 +395,7 @@ class Aplicacao(tk.Tk):
             style="Secondary.TButton", command=self._abrir_pasta,
         )
         self.botao_abrir.pack(side="left")
+        ttk.Button(resultado_acoes, text='Guias GNRE', command=self._abrir_gnre).pack(side='left', padx=8)
         self.botao_detalhes = ttk.Button(
             resultado_acoes, text="Ver detalhes", command=self._alternar_detalhes,
         )
@@ -428,7 +431,8 @@ class Aplicacao(tk.Tk):
         self.label_modo_ajuda.configure(text=DESCRICOES_MODO[modo])
         if not self.em_execucao:
             self.botao_executar.configure(
-                text="Baixar e gerar ZIPs" if modo == "somente_gnre_zip" else "Baixar e organizar",
+                text=("Baixar e abrir prévia GNRE" if modo == 'emitir_gnre' else
+                      "Baixar e gerar ZIPs" if modo == "somente_gnre_zip" else "Baixar e organizar"),
             )
 
     def _mostrar_status(self, mensagem, estado="Neutro"):
@@ -608,10 +612,10 @@ class Aplicacao(tk.Tk):
         modo = self.modo_var.get()
         ate_agora = self.ate_agora_var.get()
         incluir_gnre = modo == "com_gnre"
-        somente_gnre_zip = modo == "somente_gnre_zip"
+        somente_gnre_zip = modo in ("somente_gnre_zip", 'emitir_gnre')
         threading.Thread(
             target=self._trabalho_download,
-            args=(data_selecionada, incluir_gnre, somente_gnre_zip, ate_agora),
+            args=(data_selecionada, incluir_gnre, somente_gnre_zip, ate_agora, modo == 'emitir_gnre'),
             daemon=True,
         ).start()
 
@@ -621,6 +625,7 @@ class Aplicacao(tk.Tk):
         incluir_gnre,
         somente_gnre_zip,
         ate_agora,
+        abrir_gnre=False,
     ):
         try:
             handler = HandlerFila(self.fila)
@@ -633,6 +638,8 @@ class Aplicacao(tk.Tk):
                 handler_log=handler,
             )
             self.fila.put(("resultado", resultado))
+            if abrir_gnre:
+                self.fila.put(('abrir_gnre', resultado.arquivos_zip_gnre))
         except Exception as erro:
             self.fila.put(("erro", f"Processamento interrompido: {erro}"))
 
@@ -642,6 +649,8 @@ class Aplicacao(tk.Tk):
                 tipo, valor = self.fila.get_nowait()
                 if tipo == "log":
                     self._registrar(valor)
+                elif tipo == 'abrir_gnre':
+                    self._abrir_gnre(valor)
                 elif tipo == "autenticacao_ok":
                     self._definir_execucao(False)
                     self._atualizar_estado_conexao()
@@ -708,6 +717,12 @@ class Aplicacao(tk.Tk):
         except queue.Empty:
             pass
         self.after(100, self._processar_fila)
+
+    def _abrir_gnre(self, arquivos=None):
+        from desktop_gnre_tela import JanelaGNRE
+        if arquivos is None:
+            arquivos = self.ultimo_resultado.arquivos_zip_gnre if self.ultimo_resultado else ()
+        JanelaGNRE(self, DATA_DIR, arquivos)
 
     def _abrir_pasta(self):
         pasta = (

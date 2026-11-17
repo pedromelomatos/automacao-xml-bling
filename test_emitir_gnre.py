@@ -11,18 +11,42 @@ from unittest.mock import patch
 from lxml import etree
 
 import emitir_gnre as emitir
+from conferir_pagamento_gnre import digito
 from preparar_gnre import GNRE
-from test_preparar_gnre import CHAVE, NFE, configuracao, preparar_lote, preparar_lote_pr, preparar_lote_sc
+from test_preparar_gnre import CHAVE, NFE, configuracao, configuracao_uf_nova, preparar_lote, preparar_lote_pr, preparar_lote_sc, preparar_lote_uf
 
 
 RECIBO = "20260000000001"
 
 
-def pdf_exemplo():
+def codigo_exemplo(dados):
+    from decimal import Decimal
+    valor = sum(Decimal(v.text) for v in dados.findall(f'.//{{{GNRE}}}valor') if v.get('tipo') == '11')
+    base = '858' + f'{int(valor * 100):011d}' + '0291' + '0' * 24 + emitir.texto(dados, 'identificadorGuia')
+    base = base[:43]
+    codigo = base[:3] + digito(base, 11) + base[3:]
+    linha = ''.join(codigo[i:i + 11] + digito(codigo[i:i + 11], 11) for i in range(0, 44, 11))
+    return codigo, linha
+
+
+def pdf_exemplo(conteudo, homologacao=True):
+    linhas = []
+    for dados in etree.fromstring(conteudo).findall(f'.//{{{GNRE}}}TDadosGNRE'):
+        _, linha = codigo_exemplo(dados)
+        cnpj, _, identidade = emitir.identidade_guia(dados, CHAVE)
+        _, uf, receita, _ = identidade.split('|')
+        vencimento = emitir.texto(dados.find(f'.//{{{GNRE}}}item'), 'dataVencimento')
+        linhas += ['Guia Nacional de Recolhimento de Tributos Estaduais - GNRE',
+                   uf + ' ' + receita, cnpj, '/'.join(reversed(vencimento.split('-'))), linha]
+        if homologacao:
+            linhas += ['Guia Invalida para Pagamento']
+    stream = ('BT /F1 9 Tf 20 800 Td 12 TL ' + ' T* '.join('(' + l + ') Tj' for l in linhas) + ' ET').encode()
     objetos = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        b'<< /Length ' + str(len(stream)).encode() + b' >>\nstream\n' + stream + b'\nendstream',
     ]
     pdf = b"%PDF-1.4\n"
     offsets = [0]
@@ -30,9 +54,9 @@ def pdf_exemplo():
         offsets.append(len(pdf))
         pdf += str(numero).encode() + b" 0 obj\n" + objeto + b"\nendobj\n"
     xref = len(pdf)
-    pdf += b"xref\n0 4\n0000000000 65535 f \n"
+    pdf += b"xref\n0 6\n0000000000 65535 f \n"
     pdf += b"".join(f"{offset:010d} 00000 n \n".encode() for offset in offsets[1:])
-    return pdf + b"trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n" + str(xref).encode() + b"\n%%EOF\n"
+    return pdf + b"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + str(xref).encode() + b"\n%%EOF\n"
 
 
 def soap(conteudo):
@@ -62,8 +86,9 @@ def resultado(lote, codigo="402", status="0", pdf=None):
             etree.SubElement(guia, f"{{{GNRE}}}situacaoGuia").text = status
             guia.extend(list(dados))
             if status == "0":
-                etree.SubElement(guia, f"{{{GNRE}}}linhaDigitavel").text = "1" * 48
-                etree.SubElement(guia, f"{{{GNRE}}}codigoBarras").text = "1" * 44
+                codigo_barras, linha = codigo_exemplo(guia)
+                etree.SubElement(guia, f"{{{GNRE}}}linhaDigitavel").text = linha
+                etree.SubElement(guia, f"{{{GNRE}}}codigoBarras").text = codigo_barras
         if pdf is not None:
             etree.SubElement(resultados, f"{{{GNRE}}}pdfGuias").text = base64.b64encode(pdf).decode()
     return soap(etree.tostring(raiz))
@@ -92,17 +117,88 @@ class ServicoFalso:
 
 
 class EmissaoGnreTests(unittest.TestCase):
+    def test_ce_df_exigem_chave_da_nfe_original_e_conferem_numero_no_retorno(self):
+        for uf in ("CE", "DF"):
+            with self.subTest(uf=uf), tempfile.TemporaryDirectory() as pasta, closing(emitir.abrir_registro(Path(pasta))) as con:
+                conteudo = preparar_lote_uf(pasta, uf)
+                with self.assertRaisesRegex(RuntimeError, "chave de NF-e válida"):
+                    emitir.identificar_lote(conteudo)
+                chaves = {"1": CHAVE}
+                lote = emitir.registrar_lote(con, Path(pasta), "homologacao", conteudo, chaves)
+                self.assertIn(CHAVE, lote["origens"])
+                servico = ServicoFalso([recepcao(), resultado(conteudo, pdf=pdf_exemplo(conteudo)).replace(b">3704<", b">000003704<")])
+                emitir.receber(con, lote, servico)
+                con.execute("UPDATE lotes SET proxima_consulta=0 WHERE id=?", (lote["id"],))
+                con.commit()
+                atual = con.execute("SELECT * FROM lotes WHERE id=?", (lote["id"],)).fetchone()
+                self.assertTrue(emitir.consultar_lote(con, atual, servico))
+                divergente = resultado(conteudo, pdf=pdf_exemplo(conteudo)).replace(b">3704<", b">3705<")
+                with self.assertRaisesRegex(RuntimeError, "número do documento"):
+                    emitir.processar_resultado(con, atual, divergente, "2")
+                outra_chave = CHAVE[:22] + "006" + CHAVE[25:]
+                with self.assertRaisesRegex(RuntimeError, "outra NF-e"):
+                    emitir.registrar_lote(con, Path(pasta), "homologacao", conteudo, {"1": outra_chave})
+
+    def test_ufs_conferem_chave_extra_e_recusam_campo_ausente_ou_repetido(self):
+        for uf, campo in (("MA", "113"), ("PB", "120"), ("GO", "121"), ("MS", "105")):
+            with self.subTest(uf=uf), tempfile.TemporaryDirectory() as pasta, closing(emitir.abrir_registro(Path(pasta))) as con:
+                conteudo = preparar_lote_uf(pasta, uf)
+                lote = emitir.registrar_lote(con, Path(pasta), "homologacao", conteudo)
+                servico = ServicoFalso([recepcao(), resultado(conteudo, pdf=pdf_exemplo(conteudo))])
+                emitir.receber(con, lote, servico)
+                con.execute("UPDATE lotes SET proxima_consulta=0 WHERE id=?", (lote["id"],))
+                con.commit()
+                atual = con.execute("SELECT * FROM lotes WHERE id=?", (lote["id"],)).fetchone()
+                self.assertTrue(emitir.consultar_lote(con, atual, servico))
+                sem_campo = conteudo.replace(("<codigo>" + campo + "</codigo>").encode(), b"<codigo>99</codigo>")
+                with self.assertRaisesRegex(RuntimeError, "campo adicional " + campo):
+                    emitir.identificar_lote(sem_campo)
+                raiz = etree.fromstring(conteudo)
+                extras = raiz.find(f".//{{{GNRE}}}camposExtras")
+                extras.append(etree.fromstring(etree.tostring(extras[0])))
+                with self.assertRaisesRegex(RuntimeError, "única chave"):
+                    emitir.identificar_lote(etree.tostring(raiz))
+                if uf == "MS":
+                    retorno = etree.fromstring(resultado(conteudo, pdf=pdf_exemplo(conteudo)))
+                    item = retorno.find(f".//{{{GNRE}}}guia/{{{GNRE}}}itensGNRE/{{{GNRE}}}item")
+                    item.remove(item.find(f"{{{GNRE}}}camposExtras"))
+                    with self.assertRaisesRegex(RuntimeError, "campo adicional 105"):
+                        emitir.processar_resultado(con, atual, etree.tostring(retorno), "2")
+
+    def test_pb_recupera_pdf_do_mesmo_recibo_quando_uf_omite_a_chave(self):
+        with tempfile.TemporaryDirectory() as pasta, closing(emitir.abrir_registro(Path(pasta))) as con:
+            conteudo = preparar_lote_uf(pasta, "PB")
+            lote = emitir.registrar_lote(con, Path(pasta), "homologacao", conteudo)
+            emitir.receber(con, lote, ServicoFalso([recepcao()]))
+            lote = con.execute("SELECT * FROM lotes WHERE id=?", (lote["id"],)).fetchone()
+            resposta = etree.fromstring(resultado(conteudo, pdf=pdf_exemplo(conteudo)))
+            item = resposta.find(f".//{{{GNRE}}}guia/{{{GNRE}}}itensGNRE/{{{GNRE}}}item")
+            item.remove(item.find(f"{{{GNRE}}}camposExtras"))
+            for campo, valor in ((f"{{{GNRE}}}valor", "7.77"), (f"{{{GNRE}}}dataVencimento", "2026-11-17")):
+                elemento = item.find(campo)
+                original = elemento.text
+                elemento.text = valor
+                emitir.processar_resultado(con, lote, etree.tostring(resposta), "2")
+                self.assertEqual(con.execute('SELECT estado FROM lotes').fetchone()[0], 'em_revisao')
+                self.assertFalse(list(Path(lote['pasta']).glob('guias-*.pdf')))
+                elemento.text = original
+            self.assertTrue(emitir.processar_resultado(con, lote, etree.tostring(resposta), "2"))
+            self.assertEqual((Path(lote["pasta"]) / f"guias-{RECIBO}.pdf").read_bytes(), pdf_exemplo(conteudo))
+            import json
+            resumo = json.loads((Path(lote["pasta"]) / "resumo.json").read_text())
+            self.assertTrue(resumo["guias"][0]["chave_omitida_pela_uf"])
+
     def test_sc_confere_documento_tipo24_e_persiste_pdf(self):
         with tempfile.TemporaryDirectory() as pasta, closing(emitir.abrir_registro(Path(pasta))) as registro:
             conteudo = preparar_lote_sc(pasta)
             lote = emitir.registrar_lote(registro, Path(pasta), "homologacao", conteudo)
-            servico = ServicoFalso([recepcao(), resultado(conteudo, pdf=pdf_exemplo())])
+            servico = ServicoFalso([recepcao(), resultado(conteudo, pdf=pdf_exemplo(conteudo))])
             emitir.receber(registro, lote, servico)
             registro.execute("UPDATE lotes SET proxima_consulta=0 WHERE id=?", (lote["id"],))
             registro.commit()
             atual = registro.execute("SELECT * FROM lotes WHERE id=?", (lote["id"],)).fetchone()
             self.assertTrue(emitir.consultar_lote(registro, atual, servico))
-            self.assertEqual((Path(lote["pasta"]) / f"guias-{RECIBO}.pdf").read_bytes(), pdf_exemplo())
+            self.assertEqual((Path(lote["pasta"]) / f"guias-{RECIBO}.pdf").read_bytes(), pdf_exemplo(conteudo))
             for outro_tipo in ("22", "24"):
                 outro = conteudo.replace(b'tipo="24"', f'tipo="{outro_tipo}"'.encode())
                 self.assertEqual(emitir.identificar_lote(outro)[1], emitir.identificar_lote(conteudo)[1])
@@ -111,14 +207,14 @@ class EmissaoGnreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as pasta, closing(emitir.abrir_registro(Path(pasta))) as registro:
             conteudo = preparar_lote_pr(pasta)
             lote = emitir.registrar_lote(registro, Path(pasta), "homologacao", conteudo)
-            resposta = resultado(conteudo, pdf=pdf_exemplo()).replace(b">3704<", b">000003704<")
+            resposta = resultado(conteudo, pdf=pdf_exemplo(conteudo)).replace(b">3704<", b">000003704<")
             servico = ServicoFalso([recepcao(), resposta])
             emitir.receber(registro, lote, servico)
             registro.execute("UPDATE lotes SET proxima_consulta=0 WHERE id=?", (lote["id"],))
             registro.commit()
             atual = registro.execute("SELECT * FROM lotes WHERE id=?", (lote["id"],)).fetchone()
             self.assertTrue(emitir.consultar_lote(registro, atual, servico))
-            self.assertEqual((Path(lote["pasta"]) / f"guias-{RECIBO}.pdf").read_bytes(), pdf_exemplo())
+            self.assertEqual((Path(lote["pasta"]) / f"guias-{RECIBO}.pdf").read_bytes(), pdf_exemplo(conteudo))
             outro = etree.fromstring(conteudo)
             documento = outro.find(f".//{{{GNRE}}}documentoOrigem")
             documento.set("tipo", "22")
@@ -142,13 +238,13 @@ class EmissaoGnreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as pasta, closing(emitir.abrir_registro(Path(pasta))) as registro:
             conteudo = preparar_lote(pasta)
             lote = emitir.registrar_lote(registro, Path(pasta), "homologacao", conteudo)
-            servico = ServicoFalso([recepcao(), resultado(conteudo, pdf=pdf_exemplo())])
+            servico = ServicoFalso([recepcao(), resultado(conteudo, pdf=pdf_exemplo(conteudo))])
             self.assertEqual(emitir.receber(registro, lote, servico), RECIBO)
             registro.execute("UPDATE lotes SET proxima_consulta=0 WHERE id=?", (lote["id"],))
             registro.commit()
             lote = registro.execute("SELECT * FROM lotes WHERE id=?", (lote["id"],)).fetchone()
             self.assertTrue(emitir.consultar_lote(registro, lote, servico))
-            self.assertEqual((Path(lote["pasta"]) / f"guias-{RECIBO}.pdf").read_bytes(), pdf_exemplo())
+            self.assertEqual((Path(lote["pasta"]) / f"guias-{RECIBO}.pdf").read_bytes(), pdf_exemplo(conteudo))
             self.assertEqual(emitir.acompanhar(registro, lote["id"], servico, 0), 0)
             repetido = emitir.registrar_lote(registro, Path(pasta), "homologacao", conteudo)
             self.assertEqual(emitir.receber(registro, repetido, servico), RECIBO)
@@ -192,7 +288,7 @@ class EmissaoGnreTests(unittest.TestCase):
                 emitir.consultar_lote(registro, lote, servico)
             atual = registro.execute("SELECT * FROM lotes WHERE id=?", (lote["id"],)).fetchone()
             self.assertEqual(atual["recibo"], RECIBO)
-            self.assertEqual(atual["estado"], "recebido")
+            self.assertEqual(atual["estado"], "em_revisao")
             self.assertFalse(list(Path(lote["pasta"]).glob("*.pdf")))
 
     def test_recepcao_desliga_repeticao_do_transporte_http(self):
@@ -219,7 +315,7 @@ class EmissaoGnreTests(unittest.TestCase):
             arquivo = raiz / "nota.xml"
             arquivo.write_bytes(NFE)
             lote = preparar_lote(pasta)
-            servico = ServicoFalso([recepcao(), resultado(lote, pdf=pdf_exemplo())])
+            servico = ServicoFalso([recepcao(), resultado(lote, pdf=pdf_exemplo(lote))])
             relogio = SimpleNamespace(agora=1000.0)
             def esperar(segundos):
                 relogio.agora += segundos
@@ -235,8 +331,32 @@ class EmissaoGnreTests(unittest.TestCase):
             self.assertEqual(servico.chamadas, ["recepcao", "resultado"])
             arquivos = list((raiz / "saida/homologacao").rglob("*.pdf"))
             self.assertEqual(len(arquivos), 1)
-            self.assertEqual(arquivos[0].read_bytes(), pdf_exemplo())
+            self.assertEqual(arquivos[0].read_bytes(), pdf_exemplo(lote))
             self.assertFalse((raiz / "saida/producao").exists())
+
+    def test_cli_preserva_chave_original_de_ce_df_sem_inventa_la_no_xml_gnre(self):
+        for uf, comando in (("CE", "executar"), ("DF", "enviar")):
+            with self.subTest(uf=uf), tempfile.TemporaryDirectory() as pasta:
+                raiz = Path(pasta)
+                conteudo = preparar_lote_uf(pasta, uf)
+                lote = raiz / "lote.xml"
+                lote.write_bytes(conteudo)
+                arquivo = raiz / ("nota-" + uf + ".xml")
+                servico = ServicoFalso([recepcao()])
+                argumentos = ["emitir_gnre.py", "--dados", str(raiz / "saida"), comando, "--aguardar", "0"]
+                if comando == "executar":
+                    argumentos += ["--xml", str(arquivo), "--vencimento", "2026-11-16", "--pagamento", "2026-11-16"]
+                else:
+                    argumentos += ["--lote", str(lote), "--xml-origem", str(arquivo)]
+                with patch.object(sys, "argv", argumentos), patch.object(emitir, "ServicoGnre", return_value=servico), patch.object(
+                    servico, "configuracao", return_value=configuracao_uf_nova(uf)
+                ):
+                    self.assertEqual(emitir.main(), 2)
+                with closing(emitir.abrir_registro(raiz / "saida")) as con:
+                    registro = con.execute("SELECT origens,xml,recibo FROM lotes").fetchone()
+                    self.assertIn(CHAVE, registro["origens"])
+                    self.assertNotIn(CHAVE.encode(), registro["xml"])
+                    self.assertEqual(registro["recibo"], RECIBO)
 
     def test_envios_concorrentes_so_transmitem_uma_vez(self):
         with tempfile.TemporaryDirectory() as pasta, closing(emitir.abrir_registro(Path(pasta))) as primeiro, closing(
@@ -260,7 +380,7 @@ class EmissaoGnreTests(unittest.TestCase):
             servico = ServicoFalso([
                 recepcao(), resultado(conteudo, codigo="401"),
                 resultado(conteudo, codigo="403", status="4"),
-                resultado(conteudo, pdf=pdf_exemplo()),
+                resultado(conteudo, pdf=pdf_exemplo(conteudo)),
             ])
             emitir.receber(registro, lote, servico)
             for esperado in (False, False, True):

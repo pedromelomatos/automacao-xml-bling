@@ -2,6 +2,7 @@
 
 import argparse
 from contextlib import closing
+from email.utils import parsedate_to_datetime
 import http.client
 import json
 from pathlib import Path
@@ -23,6 +24,22 @@ AMBIENTES = {
 }
 UFS = "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split()
 LIMITE_RESPOSTA = 2 * 1024 * 1024
+
+
+class ErroHttpGnre(RuntimeError):
+    def __init__(self, mensagem, status, repetir_apos=0):
+        super().__init__(mensagem)
+        self.status, self.repetir_apos = status, repetir_apos
+
+
+def espera_http(valor):
+    try:
+        return max(0, int(valor))
+    except (ValueError, TypeError):
+        try:
+            return max(0, parsedate_to_datetime(valor).timestamp() - time.time())
+        except (ValueError, TypeError, OverflowError):
+            return 0
 
 
 def carregar_xml(conteudo):
@@ -66,9 +83,10 @@ def requisitar(contexto, host, metodo, caminho, corpo=None, cabecalhos=None, tim
                         time.sleep(2)
                         continue
                     if resposta.status != 200:
-                        raise RuntimeError(
+                        raise ErroHttpGnre(
                             f"O serviço GNRE respondeu HTTP {resposta.status} na etapa de {etapa} "
-                            f"em {metodo} {caminho}, tentativa {tentativa}/{tentativas}."
+                            f"em {metodo} {caminho}, tentativa {tentativa}/{tentativas}.",
+                            resposta.status, espera_http(resposta.getheader('Retry-After')),
                         )
                     return dados
         except TimeoutError as erro:

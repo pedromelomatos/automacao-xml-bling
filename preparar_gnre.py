@@ -15,8 +15,16 @@ from organizar_xmls import nome_local, primeiro_texto
 SCHEMAS = Path(__file__).resolve().parent / "schemas" / "gnre"
 RECEITAS = {"DIFAL": "100102", "FCP": "100129"}
 DOCUMENTOS_CHAVE_NFE = {"22", "24"}
-# Paraná: número da NF-e no tipo 10 e chave de acesso no campo extra 66.
-DOCUMENTOS_NUMERO_NFE = {("PR", "100102"): ("10", "66")}
+# Catálogos GnreConfigUF: número da NF-e e, quando exigida, chave extra.
+# CE/DF identificam o documento apenas pelo número; a chave fica no registro local.
+DOCUMENTOS_NUMERO_NFE = {
+    ("PR", "100102"): ("10", "66"),
+    ("MA", "100102"): ("10", "113"),
+    ("GO", "100102"): ("10", "121"),
+    ("CE", "100102"): ("10", None),
+    ("DF", "100102"): ("10", None),
+}
+DOCUMENTOS_CHAVE_EXTRA = {("PB", "100102"): "120", ("MS", "100102"): "105"}
 PRODUTOS = (
     "Materiais de Construção, Acabamentos, Bricolagens ou Adornos",
     "Material Elétrico",
@@ -47,6 +55,10 @@ def ler_nfe(caminho):
     if len(notas) != 1 or len(protocolos) != 1:
         raise RuntimeError("Informe o XML de uma NF-e autorizada, incluindo seu protocolo.")
     nota, protocolo = notas[0], protocolos[0]
+    if primeiro_texto(nota, ('ide', 'tpAmb')) != '1' or texto(protocolo, 'tpAmb') != '1':
+        raise RuntimeError('Este fluxo exige NF-e de produção, com ambiente 1 na nota e no protocolo.')
+    if primeiro_texto(nota, ('ide', 'tpNF')) != '1' or primeiro_texto(nota, ('ide', 'finNFe')) != '1':
+        raise RuntimeError('Este fluxo exige NF-e de saída com finalidade normal.')
     if texto(protocolo, "cStat") not in ("100", "150"):
         raise RuntimeError("O protocolo da NF-e não informa autorização.")
     chave = texto(protocolo, "chNFe")
@@ -154,13 +166,33 @@ def aceita_versao_xml(elemento, grupo, versao="2.00"):
     )
 
 
+def validar_campo_chave(regra, codigo, uf, obrigatorio=True):
+    campos = [
+        e for e in regra.iter() if nome_local(e) == "campoAdicional"
+        and texto(e, "codigo") == codigo
+        and texto(e, "obrigatorio") in (("S",) if obrigatorio else ("S", "N"))
+        and aceita_versao_xml(e, "versoesXmlCampoAdicional")
+        and "chave" in normalizar(texto(e, "titulo"))
+        and "nfe" in normalizar(texto(e, "titulo"))
+        and texto(e, "tipo") == "T" and texto(e, "tamanho") == "44"
+    ]
+    if len(campos) != 1:
+        exigencia = "exigir" if obrigatorio else "permitir"
+        raise RuntimeError(f"A configuração de {uf} deve {exigencia} a chave no campo {codigo} no XML 2.00.")
+
+
 def montar_guia(lote, nota, imposto, configuracao, vencimento, pagamento, identificador):
     codigo = RECEITAS[imposto]
     regra = regra_receita(configuracao, codigo)
     tipos = [texto_elemento.text for texto_elemento in regra.iter() if nome_local(texto_elemento) == "tipoGnre"]
     if tipos and "0" not in tipos:
         raise RuntimeError(f"A receita {codigo} não admite GNRE simples.")
-    if texto(regra, "exigeValorFecp") == "S":
+    fecp = texto(regra, "exigeValorFecp", "N")
+    if fecp not in ("N", "S", "O"):
+        raise RuntimeError("Configuração de FCP integrado desconhecida. Revise o catálogo da UF.")
+    # Neste campo, S significa opcional e O significa obrigatório (XSD oficial).
+    # O fluxo envia FCP em guia própria; a modalidade integrada ainda não é suportada.
+    if fecp == "O":
         raise RuntimeError("A receita exige FCP integrado. É necessário mapear essa configuração antes de enviar.")
     if texto(regra, "valorExigido") not in ("P", "A", "PO", "AO"):
         raise RuntimeError(f"A receita {codigo} exige outra forma de informar o valor. Revise a configuração da UF.")
@@ -199,24 +231,25 @@ def montar_guia(lote, nota, imposto, configuracao, vencimento, pagamento, identi
             e for e in regra.iter() if nome_local(e) == "tipoDocumentoOrigem"
             and texto(e, "codigo") == tipo and normalizar(texto(e, "descricao")) == "notafiscal"
         ]
-        campos_chave = [
-            e for e in regra.iter() if nome_local(e) == "campoAdicional"
-            and texto(e, "codigo") == campo_chave and texto(e, "obrigatorio") == "S"
-            and aceita_versao_xml(e, "versoesXmlCampoAdicional")
-            and "chave" in normalizar(texto(e, "titulo"))
-            and "nfe" in normalizar(texto(e, "titulo"))
-            and texto(e, "tipo") == "T" and texto(e, "tamanho") == "44"
-        ]
-        if len(por_numero) != 1 or len(campos_chave) != 1:
-            raise RuntimeError("A configuração do Paraná deve permitir o tipo 10 e exigir a chave no campo 66.")
+        if len(por_numero) != 1:
+            raise RuntimeError(f"A configuração de {nota['uf']} deve permitir o tipo {tipo} para NOTA FISCAL.")
+        if campo_chave is not None:
+            validar_campo_chave(regra, campo_chave, nota["uf"])
         numero = primeiro_texto(nota["xml"], ("ide", "nNF")) or ""
         if not re.fullmatch(r"[0-9]{1,9}", numero) or int(numero) <= 0 or int(numero) != int(nota["chave"][25:34]):
             raise RuntimeError("O número da NF-e difere do número informado na chave de acesso.")
         documentos = [tipo]
         documento = str(int(numero))
-    if len(documentos) != 1:
-        raise RuntimeError(f"A receita {codigo} não retornou um tipo único de documento para a chave da NF-e.")
-    adicionar(item, "documentoOrigem", documento, tipo=documentos[0])
+    elif not documentos and (nota["uf"], codigo) in DOCUMENTOS_CHAVE_EXTRA:
+        if texto(regra, "exigeDocumentoOrigem") != "N":
+            raise RuntimeError(f"A configuração de {nota['uf']} não permite omitir o documento de origem.")
+        validar_campo_chave(regra, DOCUMENTOS_CHAVE_EXTRA[(nota["uf"], codigo)], nota["uf"],
+                            obrigatorio=nota["uf"] != "MS")
+        documento = None
+    if documento is not None:
+        if len(documentos) != 1:
+            raise RuntimeError(f"A receita {codigo} não retornou um tipo único de documento para a chave da NF-e.")
+        adicionar(item, "documentoOrigem", documento, tipo=documentos[0])
     if texto(regra, "exigeProduto") == "S":
         produtos = {
             normalizar(texto(e, "descricao")): texto(e, "codigo")
@@ -240,9 +273,14 @@ def montar_guia(lote, nota, imposto, configuracao, vencimento, pagamento, identi
         contribuinte(item, "contribuinteDestinatario", nota["xml"], "dest")
     adicionais = []
     for campo in regra.iter():
-        if nome_local(campo) != "campoAdicional" or texto(campo, "obrigatorio") != "S" or not aceita_versao_xml(
+        if nome_local(campo) != "campoAdicional" or not aceita_versao_xml(
             campo, "versoesXmlCampoAdicional",
         ):
+            continue
+        # MS permite a chave no campo opcional 105; enviá-la preserva o vínculo
+        # com a NF-e mesmo sem documento de origem no catálogo da UF.
+        chave_opcional_ms = (nota["uf"], codigo, texto(campo, "codigo")) == ("MS", "100102", "105")
+        if texto(campo, "obrigatorio") != "S" and not chave_opcional_ms:
             continue
         titulo = normalizar(texto(campo, "titulo"))
         if "chave" in titulo and ("nfe" in titulo or "notafiscal" in titulo):
@@ -264,6 +302,8 @@ def montar_guia(lote, nota, imposto, configuracao, vencimento, pagamento, identi
 
 
 def montar_lote(nota, configuracoes, vencimento, pagamento):
+    if vencimento < nota['emissao'] or pagamento < nota['emissao']:
+        raise RuntimeError('Vencimento e pagamento não podem ser anteriores à emissão da NF-e.')
     raiz = etree.Element(f"{{{GNRE}}}TLote_GNRE", nsmap={None: GNRE}, versao="2.00")
     guias = adicionar(raiz, "guias", "")
     identificador = 0

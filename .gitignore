@@ -6,6 +6,8 @@
 **/tokens*.json
 /configuracao.json
 /configuracao_dropbox.json
+/Guias-GNRE/
+**/rclone.conf
 
 # Dados gerados pela automacao
 /dados/
@@ -16,15 +18,24 @@
 /xml_por_cnpj/
 /xml_por_marketplace/
 /xml_teste/
-/output/pdf/
+/output/
 /GNRE - ZIP/
 /gnre/
+Resultados-homologacao-*/
 *.xml
 *.XML
 *.log
 estado_execucao.json
 configuracao_execucao.json
 .executor_diario.lock
+
+# Bancos locais e arquivos auxiliares de persistencia
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
 
 # Segredos locais; preserva somente o aviso sem credenciais
 /segredos/*
@@ -67,6 +78,8 @@ configuracao_execucao.json
 
 # Arquivos temporarios e backups
 /.backup-local/
+/backups-codigo/
+/backups-dados/
 /tmp/
 *.tmp
 *.bak
@@ -80,6 +93,10 @@ configuracao_execucao.json
 *.pem
 *.p12
 *.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
 
 # Cache e ambientes Python
 __pycache__/

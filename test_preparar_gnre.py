@@ -12,14 +12,14 @@ import preparar_gnre as preparar
 CHAVE = "35261000000000000000550050000037041531922135"
 NFE = f"""<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe">
 <NFe><infNFe Id="NFe{CHAVE}">
-<ide><mod>55</mod><nNF>3704</nNF><dhEmi>2026-10-29T08:00:00-03:00</dhEmi><indFinal>1</indFinal></ide>
+<ide><mod>55</mod><nNF>3704</nNF><dhEmi>2026-10-29T08:00:00-03:00</dhEmi><tpAmb>1</tpAmb><tpNF>1</tpNF><finNFe>1</finNFe><indFinal>1</indFinal></ide>
 <emit><CNPJ>00000000000000</CNPJ><xNome>Empresa de Exemplo</xNome>
 <enderEmit><xLgr>Rua Exemplo</xLgr><nro>1</nro><cMun>3550308</cMun><UF>SP</UF><CEP>01000000</CEP><fone>11999999999</fone></enderEmit></emit>
 <dest><CPF>00000000000</CPF><xNome>Destinatario de Exemplo</xNome>
 <enderDest><cMun>2704302</cMun><UF>AL</UF></enderDest><indIEDest>9</indIEDest></dest>
 <det><imposto><ICMSUFDest><vICMSUFDest>6.77</vICMSUFDest><vFCPUFDest>0.50</vFCPUFDest></ICMSUFDest></imposto></det>
 <total><ICMSTot><vICMSUFDest>6.77</vICMSUFDest><vFCPUFDest>0.50</vFCPUFDest><vST>0.00</vST></ICMSTot></total>
-</infNFe></NFe><protNFe><infProt><chNFe>{CHAVE}</chNFe><cStat>100</cStat></infProt></protNFe>
+</infNFe></NFe><protNFe><infProt><tpAmb>1</tpAmb><chNFe>{CHAVE}</chNFe><cStat>100</cStat></infProt></protNFe>
 </nfeProc>""".encode()
 
 
@@ -109,7 +109,86 @@ def preparar_lote_sc(pasta, config=None):
     )
 
 
+def configuracao_uf_nova(uf):
+    # Catálogos oficiais CE/DF/MA/PB/GO/MS de 16/11/2026, receita 100102.
+    config = configuracao_pr()
+    regra = config.find(f".//{{{preparar.GNRE}}}receita")
+    campos = regra.find(f"{{{preparar.GNRE}}}camposAdicionais")
+    regra.remove(campos)
+    documentos = regra.find(f"{{{preparar.GNRE}}}tiposDocumentosOrigem")
+    if uf in ("PB", "MS"):
+        regra.remove(documentos)
+    ET.SubElement(regra, f"{{{preparar.GNRE}}}exigeDocumentoOrigem").text = "N" if uf in ("PB", "MS") else "S"
+    if uf in ("MA", "PB", "GO", "MS"):
+        campos = ET.SubElement(regra, f"{{{preparar.GNRE}}}camposAdicionais")
+        campo = ET.SubElement(campos, f"{{{preparar.GNRE}}}campoAdicional")
+        for nome, valor in (("obrigatorio", "N" if uf == "MS" else "S"),
+                            ("codigo", {"MA": "113", "PB": "120", "GO": "121", "MS": "105"}[uf]),
+                            ("tipo", "T"), ("tamanho", "44"), ("titulo", "Chave de Acesso da NFe ou do CTe/CTe-OS")):
+            ET.SubElement(campo, f"{{{preparar.GNRE}}}{nome}").text = valor
+    return config
+
+
+def preparar_lote_uf(pasta, uf, config=None):
+    arquivo = Path(pasta) / ("nota-" + uf + ".xml")
+    municipios = {"CE": "2304400", "DF": "5300108", "MA": "2111300", "PB": "2507507",
+                  "GO": "5208707", "MS": "5002704"}
+    arquivo.write_bytes(NFE_PR.replace(b"<UF>PR</UF>", ("<UF>" + uf + "</UF>").encode())
+                        .replace(b"4106902", municipios[uf].encode()))
+    return preparar.montar_lote(preparar.ler_nfe(arquivo),
+                               {"100102": configuracao_uf_nova(uf) if config is None else config},
+                               date(2026, 11, 16), date(2026, 11, 16))
+
+
 class PrepararGnreTests(unittest.TestCase):
+    def test_fcp_integrado_obrigatorio_ou_desconhecido_bloqueia_e_opcional_nao_duplica(self):
+        with tempfile.TemporaryDirectory() as pasta:
+            arquivo = Path(pasta) / 'nota.xml'
+            arquivo.write_bytes(NFE)
+            nota = preparar.ler_nfe(arquivo)
+            for flag in ('N', 'S', 'O', 'X'):
+                with self.subTest(flag=flag):
+                    configs = {r: configuracao(r) for r in preparar.RECEITAS.values()}
+                    configs['100102'].find(f'.//{{{preparar.GNRE}}}exigeValorFecp').text = flag
+                    if flag in ('O', 'X'):
+                        with self.assertRaisesRegex(RuntimeError, 'FCP integrado'):
+                            preparar.montar_lote(nota, configs, date(2026, 11, 16), date(2026, 11, 16))
+                    else:
+                        xml = preparar.montar_lote(nota, configs, date(2026, 11, 16), date(2026, 11, 16))
+                        raiz = etree.fromstring(xml)
+                        self.assertEqual(len(raiz.findall(f'.//{{{preparar.GNRE}}}TDadosGNRE')), 2)
+                        self.assertNotIn(b'tipo="12"', xml)
+
+    def test_novas_ufs_seguem_documento_e_campo_de_chave_do_catalogo(self):
+        ns = {"g": preparar.GNRE}
+        for uf, tipos, numeros, extras in (("CE", ["10"], ["3704"], []),
+                                           ("DF", ["10"], ["3704"], []),
+                                           ("MA", ["10"], ["3704"], ["113"]),
+                                           ("GO", ["10"], ["3704"], ["121"]),
+                                           ("MS", [], [], ["105"]),
+                                           ("PB", [], [], ["120"])):
+            with self.subTest(uf=uf), tempfile.TemporaryDirectory() as pasta:
+                raiz = etree.fromstring(preparar_lote_uf(pasta, uf))
+                self.assertEqual(raiz.xpath("//g:documentoOrigem/@tipo", namespaces=ns), tipos)
+                self.assertEqual(raiz.xpath("//g:documentoOrigem/text()", namespaces=ns), numeros)
+                self.assertEqual(raiz.xpath("//g:campoExtra/g:codigo/text()", namespaces=ns), extras)
+                self.assertEqual(raiz.xpath("//g:campoExtra/g:valor/text()", namespaces=ns), [CHAVE] if extras else [])
+                self.assertEqual(raiz.xpath("//g:item/g:valor/text()", namespaces=ns), ["6.77"])
+
+    def test_novas_ufs_recusam_catalogos_com_documento_ou_campo_incompativeis(self):
+        for uf in ("CE", "DF", "MA", "PB", "GO", "MS"):
+            config = configuracao_uf_nova(uf)
+            if uf in ("MA", "PB", "GO", "MS"):
+                config.find(f".//{{{preparar.GNRE}}}campoAdicional/{{{preparar.GNRE}}}tamanho").text = "43"
+            else:
+                config.find(f".//{{{preparar.GNRE}}}tipoDocumentoOrigem/{{{preparar.GNRE}}}descricao").text = "CTe"
+            with self.subTest(uf=uf), tempfile.TemporaryDirectory() as pasta, self.assertRaises(RuntimeError):
+                preparar_lote_uf(pasta, uf, config)
+        config = configuracao_uf_nova("PB")
+        config.find(f".//{{{preparar.GNRE}}}exigeDocumentoOrigem").text = "S"
+        with tempfile.TemporaryDirectory() as pasta, self.assertRaisesRegex(RuntimeError, "omitir"):
+            preparar_lote_uf(pasta, "PB", config)
+
     def test_sc_envia_chave_dfe_tipo24_sem_campo_da_versao_antiga(self):
         with tempfile.TemporaryDirectory() as pasta:
             raiz = etree.fromstring(preparar_lote_sc(pasta))

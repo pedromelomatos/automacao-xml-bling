@@ -19,8 +19,11 @@ import xml.etree.ElementTree as ET
 
 from lxml import etree
 
+from conferir_retorno_gnre import conferir_guia
+from conferir_pagamento_gnre import conferir_codigo, conferir_pdf
 import consultar_gnre as consulta
-from preparar_gnre import DOCUMENTOS_CHAVE_NFE, DOCUMENTOS_NUMERO_NFE, GNRE, RECEITAS, ler_nfe, montar_lote, texto, validar_xsd
+import controle_producao_gnre as controle_producao
+from preparar_gnre import DOCUMENTOS_CHAVE_EXTRA, DOCUMENTOS_CHAVE_NFE, DOCUMENTOS_NUMERO_NFE, GNRE, RECEITAS, dinheiro, ler_nfe, montar_lote, texto, validar_xsd
 
 
 SERVICOS = {
@@ -122,7 +125,7 @@ class ServicoGnre:
         return consulta.obter_configuracao(retorno, namespace, self.ambiente, uf)
 
 
-def identidade_guia(guia):
+def identidade_guia(guia, chave_origem=None, chave_omitida_no_retorno=False):
     if guia.get("versao") != "2.00" or texto(guia, "tipoGnre") != "0":
         raise RuntimeError("O fluxo inicial aceita guias simples na versão 2.00.")
     cnpj = guia.findtext(f"{{{GNRE}}}contribuinteEmitente/{{{GNRE}}}identificacao/{{{GNRE}}}CNPJ")
@@ -133,21 +136,33 @@ def identidade_guia(guia):
     documento = item.find(f"{{{GNRE}}}documentoOrigem")
     identificador = texto(guia, "identificadorGuia")
     receita = texto(item, "receita")
-    if documento is None or not documento.text:
-        raise RuntimeError("Cada guia deve referenciar uma NF-e por seu documento de origem.")
-    chave = documento.text if documento.get("tipo") in DOCUMENTOS_CHAVE_NFE else ""
+    chave = ""
     por_numero = DOCUMENTOS_NUMERO_NFE.get((texto(guia, "ufFavorecida"), receita))
-    if por_numero and documento.get("tipo") == por_numero[0]:
+    campo_chave = None
+    if documento is not None and documento.text and documento.get("tipo") in DOCUMENTOS_CHAVE_NFE:
+        chave = documento.text
+    elif por_numero and documento is not None and documento.get("tipo") == por_numero[0]:
+        campo_chave = por_numero[1]
+        if campo_chave is None:
+            chave = chave_origem or ""
+    elif documento is None:
+        campo_chave = DOCUMENTOS_CHAVE_EXTRA.get((texto(guia, "ufFavorecida"), receita))
+    if campo_chave:
         campos = [
             campo for campo in item.findall(f"{{{GNRE}}}camposExtras/{{{GNRE}}}campoExtra")
-            if texto(campo, "codigo") == por_numero[1]
+            if texto(campo, "codigo") == campo_chave
         ]
-        if len(campos) != 1:
-            raise RuntimeError("A guia deve informar uma única chave de NF-e no campo adicional 66.")
-        chave = texto(campos[0], "valor")
+        if not campos and chave_omitida_no_retorno and documento is None and (
+            texto(guia, "ufFavorecida"), receita
+        ) == ("PB", "100102"):
+            chave = chave_origem or ""
+        elif len(campos) != 1:
+            raise RuntimeError(f"A guia deve informar uma única chave de NF-e no campo adicional {campo_chave}.")
+        else:
+            chave = texto(campos[0], "valor")
     if not re.fullmatch(r"[0-9]{6}[A-Z0-9]{12}[0-9]{26}", chave) or chave[20:22] != "55":
         raise RuntimeError("A guia não contém uma chave de NF-e válida no documento ou campo adicional mapeado.")
-    if documento.get("tipo") not in DOCUMENTOS_CHAVE_NFE and (
+    if documento is not None and documento.get("tipo") not in DOCUMENTOS_CHAVE_NFE and (
         not re.fullmatch(r"[0-9]{1,9}", documento.text) or int(documento.text) <= 0
         or int(documento.text) != int(chave[25:34])
     ):
@@ -160,7 +175,7 @@ def identidade_guia(guia):
     return cnpj, identificador, identidade
 
 
-def identificar_lote(conteudo):
+def identificar_lote(conteudo, chaves_origem=None):
     raiz = validar_xsd(conteudo)
     guias = raiz.findall(f"{{{GNRE}}}guias/{{{GNRE}}}TDadosGNRE")
     if not guias or len(conteudo) > 600 * 1024:
@@ -168,7 +183,9 @@ def identificar_lote(conteudo):
     origens = {}
     cnpjs = set()
     for guia in guias:
-        cnpj, identificador, identidade = identidade_guia(guia)
+        cnpj, identificador, identidade = identidade_guia(
+            guia, (chaves_origem or {}).get(texto(guia, "identificadorGuia")),
+        )
         if identificador in origens:
             raise RuntimeError("Identificador de guia repetido no lote.")
         origens[identificador] = identidade
@@ -178,7 +195,9 @@ def identificar_lote(conteudo):
     return next(iter(cnpjs)), origens
 
 
-def abrir_registro(pasta):
+def abrir_registro(pasta, ambiente=None):
+    if ambiente == 'producao':
+        controle_producao.validar_base(pasta)
     pasta.mkdir(parents=True, exist_ok=True)
     conexao = sqlite3.connect(pasta / "controle.sqlite3", timeout=10)
     conexao.row_factory = sqlite3.Row
@@ -200,15 +219,19 @@ def abrir_registro(pasta):
     return conexao
 
 
-def registrar_lote(conexao, pasta, ambiente, conteudo):
-    cnpj, origens = identificar_lote(conteudo)
+def registrar_lote(conexao, pasta, ambiente, conteudo, chaves_origem=None):
+    cnpj, origens = identificar_lote(conteudo, chaves_origem)
     canonico = etree.tostring(validar_xsd(conteudo), method="c14n")
     lote_id = hashlib.sha256(ambiente.encode() + b"\0" + canonico).hexdigest()
     destino = pasta / ambiente / cnpj / date.today().isoformat() / lote_id
     with conexao:
         conexao.execute("BEGIN IMMEDIATE")
+        if ambiente == 'producao':
+            controle_producao.verificar_envio(conexao, pasta, origens, conteudo)
         existente = conexao.execute("SELECT * FROM lotes WHERE id=?", (lote_id,)).fetchone()
         if existente is not None:
+            if json.loads(existente["origens"]) != origens:
+                raise RuntimeError("O lote já está associado a outra NF-e no registro local.")
             return existente
         for identidade in origens.values():
             anterior = conexao.execute(
@@ -241,7 +264,8 @@ def processar_recepcao(conexao, lote, resposta, ambiente):
             conexao.execute(
                 "UPDATE lotes SET estado='rejeitado',erro=? WHERE id=?", (f"{codigo}: {descricao}", lote["id"]),
             )
-            conexao.execute("DELETE FROM guias WHERE lote=?", (lote["id"],))
+            if lote['ambiente'] != 'producao':
+                conexao.execute("DELETE FROM guias WHERE lote=?", (lote["id"],))
         raise RuntimeError(f"Lote rejeitado na recepção ({codigo}): {descricao}")
     numero = retorno.findtext(f"{{{GNRE}}}recibo/{{{GNRE}}}numero", default="")
     if not re.fullmatch(r"(?:[0-9]{10}|[0-9]{14})", numero):
@@ -263,6 +287,9 @@ def receber(conexao, lote, servico):
     gravar(Path(lote["pasta"]) / "lote.xml", lote["xml"])
     servico.preparar("recepcao")
     with conexao:
+        if lote['ambiente'] == 'producao':
+            conexao.execute('BEGIN IMMEDIATE')
+            controle_producao.verificar_envio(conexao, Path(lote['pasta']).parents[3], json.loads(lote['origens']), lote['xml'])
         alterados = conexao.execute(
             "UPDATE lotes SET estado='enviando' WHERE id=? AND estado='preparado'", (lote["id"],),
         ).rowcount
@@ -313,6 +340,26 @@ def consultar_lote(conexao, lote, servico):
 
 
 def processar_resultado(conexao, lote, resposta, ambiente):
+    try:
+        return _processar_resultado(conexao, lote, resposta, ambiente)
+    except (RuntimeError, ValueError, etree.LxmlError) as erro:
+        # Recibo e reservas permanecem. Um retorno inválido nunca deixa PDF liberado.
+        pasta = Path(lote['pasta'])
+        pdf = pasta / f"guias-{lote['recibo']}.pdf"
+        if pdf.exists():
+            revisao = pasta / 'revisao'
+            revisao.mkdir(parents=True, exist_ok=True)
+            pdf.replace(revisao / pdf.name)
+        with conexao:
+            conexao.execute("UPDATE lotes SET estado='em_revisao',erro=? WHERE id=?", (str(erro), lote['id']))
+        gravar(pasta / 'resumo.json', (json.dumps({
+            'ambiente': lote['ambiente'], 'recibo': lote['recibo'],
+            'liberado_para_pagamento': False, 'erro_conferencia': str(erro),
+        }, ensure_ascii=False, indent=2) + '\n').encode())
+        raise
+
+
+def _processar_resultado(conexao, lote, resposta, ambiente):
     with conexao:
         conexao.execute("UPDATE lotes SET resultado=? WHERE id=?", (resposta, lote["id"]))
     pasta = Path(lote["pasta"])
@@ -334,23 +381,58 @@ def processar_resultado(conexao, lote, resposta, ambiente):
     if resultado is None:
         raise RuntimeError("O retorno não contém o resultado das guias.")
     esperadas = json.loads(lote["origens"])
+    enviadas = {
+        texto(guia, "identificadorGuia"): guia
+        for guia in validar_xsd(lote["xml"]).findall(f"{{{GNRE}}}guias/{{{GNRE}}}TDadosGNRE")
+    }
     guias = []
     for guia in resultado.findall(f"{{{GNRE}}}guia"):
-        _, identificador, origem_retornada = identidade_guia(guia)
-        if identificador not in esperadas or origem_retornada != esperadas[identificador]:
+        identificador = texto(guia, "identificadorGuia")
+        if identificador not in esperadas:
             raise RuntimeError("O resultado contém uma guia diferente do lote enviado.")
+        chave = esperadas[identificador].rsplit("|", 1)[-1]
+        # PB aceita o campo 120 no envio, mas pode omiti-lo no retorno do recibo.
+        # O envio continua exigindo a chave; essa exceção só vale na conferência
+        # do mesmo recibo/identificador e mantém os dados fiscais comparados.
+        enviada = enviadas[identificador]
+        if identidade_guia(enviada, chave)[2] != esperadas[identificador]:
+            raise RuntimeError("O registro de origem difere da guia enviada.")
+        _, _, origem_retornada = identidade_guia(guia, chave, chave_omitida_no_retorno=True)
+        if origem_retornada != esperadas[identificador]:
+            raise RuntimeError("O resultado contém uma guia diferente do lote enviado.")
+        chave_omitida = (
+            texto(guia, "ufFavorecida") == "PB"
+            and guia.find(f"{{{GNRE}}}itensGNRE/{{{GNRE}}}item/{{{GNRE}}}documentoOrigem") is None
+            and not any(texto(campo, "codigo") == "120" for campo in guia.findall(
+                f"{{{GNRE}}}itensGNRE/{{{GNRE}}}item/{{{GNRE}}}camposExtras/{{{GNRE}}}campoExtra"
+            ))
+        )
         motivos = [
             {"codigo": texto(m, "codigo"), "descricao": texto(m, "descricao"), "campo": texto(m, "campo")}
             for m in guia.findall(f"{{{GNRE}}}motivosRejeicao/{{{GNRE}}}motivo")
         ]
-        guias.append({
+        resumo_guia = {
             "identificador": identificador, "situacao": texto(guia, "situacaoGuia"),
             "linha_digitavel": texto(guia, "linhaDigitavel"), "codigo_barras": texto(guia, "codigoBarras"),
             "motivos": motivos,
-        })
+            "origem": esperadas[identificador],
+        }
+        if resumo_guia['situacao'] == '0':
+            resumo_guia['conferencia'] = conferir_guia(enviada, guia)
+            try:
+                resumo_guia['pagamento'] = conferir_codigo(
+                    resumo_guia['codigo_barras'], resumo_guia['linha_digitavel'],
+                    resumo_guia['conferencia']['total'])
+            except ValueError as erro:
+                resumo_guia['conferencia']['divergencias'].append(str(erro))
+        if chave_omitida:
+            resumo_guia["chave_omitida_pela_uf"] = True
+        guias.append(resumo_guia)
     if len(guias) != len(esperadas) or {g["identificador"] for g in guias} != set(esperadas):
         raise RuntimeError("A quantidade ou a identificação das guias retornadas difere do lote enviado.")
+    revisar = any(g.get('conferencia', {}).get('divergencias') for g in guias)
     pdf_texto = texto(resultado, "pdfGuias")
+    conferencia_pdf = None
     if pdf_texto:
         try:
             pdf = base64.b64decode("".join(pdf_texto.split()), validate=True)
@@ -358,20 +440,44 @@ def processar_resultado(conexao, lote, resposta, ambiente):
             raise RuntimeError("O PDF retornado está com Base64 inválido.") from erro
         if not pdf.startswith(b"%PDF-") or b"%%EOF" not in pdf[-2048:]:
             raise RuntimeError("O arquivo retornado não contém um PDF completo.")
-        gravar(pasta / f"guias-{lote['recibo']}.pdf", pdf)
+        aceitas_pdf = []
+        for g in guias:
+            if g['situacao'] == '0' and 'pagamento' in g:
+                cnpj, uf, receita, _ = g['origem'].split('|')
+                aceitas_pdf.append({**g['pagamento'], 'cnpj': cnpj, 'uf': uf, 'receita': receita,
+                                    'vencimento': g['conferencia']['vencimento'],
+                                    'validade': g['conferencia']['validade']})
+        try:
+            if len(aceitas_pdf) != sum(g['situacao'] == '0' for g in guias):
+                raise ValueError('Há código de pagamento inválido; PDF retido para revisão.')
+            conferencia_pdf = (conferir_pdf(pdf, aceitas_pdf, lote['ambiente']) if aceitas_pdf
+                               else {'nao_liberado': 'Nenhuma guia aceita.'})
+        except ValueError as erro:
+            revisar = True
+            conferencia_pdf = {'divergencias': [str(erro)]}
+        destino_pdf = pasta / ('revisao' if revisar or not aceitas_pdf else '.') / f"guias-{lote['recibo']}.pdf"
+        gravar(destino_pdf, pdf)
+        if revisar or not aceitas_pdf:
+            # Uma resposta nova nunca deixa um PDF antigo aparentando estar liberado.
+            (pasta / f"guias-{lote['recibo']}.pdf").unlink(missing_ok=True)
     pendente = any(g["situacao"] in ("3", "4") for g in guias)
     if any(g["situacao"] not in ("0", "1", "2", "3", "4") for g in guias):
         raise RuntimeError("O retorno contém situação de guia desconhecida.")
     aceitas = sum(g["situacao"] == "0" for g in guias)
     if aceitas and not pdf_texto:
         raise RuntimeError("Há guias aceitas, mas o PDF solicitado não foi retornado. Consulte o recibo novamente.")
-    resumo = {"ambiente": lote["ambiente"], "recibo": lote["recibo"], "guias": guias}
+    resumo = {"ambiente": lote["ambiente"], "recibo": lote["recibo"], "guias": guias,
+              'resultado_sha256': hashlib.sha256(resposta).hexdigest(),
+              'conferencia_pdf': conferencia_pdf,
+              "liberado_para_pagamento": lote['ambiente'] == 'producao' and not revisar and aceitas == len(guias)}
     gravar(pasta / "resumo.json", (json.dumps(resumo, ensure_ascii=False, indent=2) + "\n").encode())
-    estado = "pendente" if pendente else ("concluido" if aceitas == len(guias) else "com_rejeicoes")
+    estado = 'em_revisao' if revisar else ("pendente" if pendente else ("concluido" if aceitas == len(guias) else "com_rejeicoes"))
     with conexao:
         conexao.execute("UPDATE lotes SET estado=? WHERE id=?", (estado, lote["id"]))
     print(f"Guias aceitas: {aceitas}/{len(guias)}. Arquivos em {pasta}.", flush=True)
-    return not pendente
+    if revisar:
+        print('Retorno exige revisão. PDF separado; nenhuma guia liberada para pagamento.', flush=True)
+    return revisar or not pendente
 
 
 def acompanhar(conexao, lote_id, servico, aguardar):
@@ -380,7 +486,7 @@ def acompanhar(conexao, lote_id, servico, aguardar):
         lote = conexao.execute("SELECT * FROM lotes WHERE id=?", (lote_id,)).fetchone()
         if lote is None:
             raise RuntimeError("Lote não encontrado no registro.")
-        if lote["estado"] in ("concluido", "com_rejeicoes"):
+        if lote["estado"] in ("concluido", "com_rejeicoes", "em_revisao"):
             print(f"Lote {lote['estado']}. Arquivos em {lote['pasta']}.")
             return 0 if lote["estado"] == "concluido" else 1
         if consultar_lote(conexao, lote, servico):
@@ -398,7 +504,7 @@ def acompanhar(conexao, lote_id, servico, aguardar):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--identidade", type=Path, default=Path("/run/gnre/identidade.pem"))
-    parser.add_argument("--dados", type=Path, default=Path("/dados/gnre"))
+    parser.add_argument("--dados", type=Path)
     parser.add_argument("--ambiente", choices=consulta.AMBIENTES, default="homologacao")
     parser.add_argument("--timeout", type=int, default=90)
     parser.add_argument("--confirmar-producao", action="store_true")
@@ -412,6 +518,7 @@ def main():
             comando.add_argument("--aguardar", type=int, default=300)
     enviar = comandos.add_parser("enviar")
     enviar.add_argument("--lote", type=Path, required=True)
+    enviar.add_argument("--xml-origem", type=Path, help="NF-e original para UFs que recebem apenas o número do documento")
     enviar.add_argument("--aguardar", type=int, default=300)
     consultar = comandos.add_parser("consultar")
     consultar.add_argument("--lote-id", required=True)
@@ -422,8 +529,12 @@ def main():
     if args.comando in ("enviar", "executar") and args.ambiente == "producao" and not args.confirmar_producao:
         parser.error("confirme explicitamente a emissão em produção com --confirmar-producao")
     try:
-        args.dados = args.dados.expanduser().resolve()
+        args.dados = (args.dados or (controle_producao.PASTA_PRODUCAO if args.ambiente == 'producao'
+                                    else Path('/dados/gnre'))).expanduser().resolve()
+        if args.ambiente == 'producao':
+            controle_producao.validar_base(args.dados)
         servico = ServicoGnre(args.identidade, args.ambiente, args.timeout)
+        chaves_origem = {}
         print(f"Ambiente de {args.ambiente}.", flush=True)
         if args.comando in ("preparar", "executar"):
             nota = ler_nfe(args.xml)
@@ -443,11 +554,19 @@ def main():
             if args.comando == "preparar":
                 return 0
             conteudo = lote
+            chaves_origem = {texto(guia, "identificadorGuia"): nota["chave"]
+                             for guia in validar_xsd(conteudo).findall(f"{{{GNRE}}}guias/{{{GNRE}}}TDadosGNRE")}
         elif args.comando == "enviar":
             conteudo = args.lote.read_bytes()
-        with closing(abrir_registro(args.dados)) as conexao:
+            if args.xml_origem:
+                nota = ler_nfe(args.xml_origem)
+                guias = validar_xsd(conteudo).findall(f"{{{GNRE}}}guias/{{{GNRE}}}TDadosGNRE")
+                if any(texto(guia, "ufFavorecida") != nota["uf"] for guia in guias):
+                    raise RuntimeError("A UF do lote difere da NF-e original.")
+                chaves_origem = {texto(guia, "identificadorGuia"): nota["chave"] for guia in guias}
+        with closing(abrir_registro(args.dados, args.ambiente)) as conexao:
             if args.comando in ("enviar", "executar"):
-                lote = registrar_lote(conexao, args.dados, args.ambiente, conteudo)
+                lote = registrar_lote(conexao, args.dados, args.ambiente, conteudo, chaves_origem)
                 print(f"Identificador do lote: {lote['id']}", flush=True)
                 receber(conexao, lote, servico)
                 lote_id = lote["id"]

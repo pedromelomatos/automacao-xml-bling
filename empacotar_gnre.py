@@ -14,7 +14,12 @@ SCHEMAS = (
 )
 ARQUIVOS = (
     "Dockerfile.gnre", "docker-compose.gnre.yml", "consultar_gnre.py", "preparar_gnre.py", "emitir_gnre.py",
+    "conferir_retorno_gnre.py", "controle_producao_gnre.py",
+    "conferir_pagamento_gnre.py", "operacao_gnre.py",
+    "acompanhamento_gnre.py", "desktop_gnre_servidor.py", "scripts/desktop_gnre_rpc.sh",
     "scripts/testar_gnre_debian.sh", "scripts/executar_gnre_debian.sh",
+    "scripts/operar_gnre_debian.sh",
+    "scripts/concluir_imagem_gnre.sh",
     *("schemas/gnre/" + nome for nome in SCHEMAS),
 )
 

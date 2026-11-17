@@ -298,6 +298,22 @@ corpo de respostas HTTP de erro.
 
 ### Preparação e emissão GNRE em homologação
 
+No Windows desta instalação, o atalho abaixo copia os XMLs de uma pasta para
+o Debian, executa o cliente de homologação e baixa os PDFs e o resumo para
+uma subpasta `Resultados-homologacao-*` junto aos XMLs:
+
+```powershell
+.\homologar.ps1 "C:\caminho\dos\xmls"
+```
+
+Acrescente `-Simular` para conferir os XMLs e os controles existentes sem
+transmitir guias nem consultar o serviço. O atalho usa o SSH de
+`segredos/ssh/config` e o cliente atualizado do ensaio de 16/11/2026.
+Notas já registradas nas bases de homologação são preservadas; lotes com
+recibo ainda pendentes são consultados na base original. Envios incertos
+sem recibo e rejeições exigem revisão. Vencimento e pagamento de teste usam
+o dia atual em America/Sao_Paulo. As guias são inválidas para pagamento.
+
 Gere o pacote com `python empacotar_gnre.py --xml-amostra CAMINHO_DA_NFE.xml`.
 O ZIP `dist/GNRE-Homologacao-Debian.zip` contém o cliente, os XSDs públicos
 obtidos do repositório ACBr e o wheel Linux do lxml 6.1.3. A imagem
@@ -326,14 +342,88 @@ Este fluxo inicial atende guias simples de DIFAL e FCP do DIFAL. Os valores
 principais são lidos da NF-e, com conferência dos totais contra os itens.
 Para PR e receita 100102, o documento de origem usa o número da NF-e no tipo
 10, com a chave de acesso no campo adicional 66, conforme o catálogo da UF.
-O controle de duplicidade e a conferência do retorno usam a chave completa.
+MA usa o tipo 10 e a chave no campo 113; GO usa o tipo 10 e a chave no campo
+121. PB informa a chave no campo 120, sem documento de origem. MS também
+omite o documento de origem e envia a chave no campo 105, permitido como
+opcional no catálogo da UF, para manter o vínculo com a NF-e.
+CE e DF usam apenas o número no tipo 10; nesses
+casos a chave completa é preservada no registro local a partir da NF-e original,
+e o retorno é conferido por número, emitente, UF e receita. Ao usar `enviar`
+para CE/DF, acrescente `--xml-origem CAMINHO_DA_NFE.xml`; `executar` já recebe
+esse XML. O controle de duplicidade mantém a chave completa em todos os casos.
+Se PB omitir o campo 120 no retorno, a chave permanece vinculada ao lote
+original e a conferência exige o mesmo recibo, identificador, emitente, UF,
+receita, principal, datas e referência. Essa omissão é registrada no resumo.
 Os documentos por chave admitem os tipos 22 (NF-e) e 24 (DFe), conforme o
 catálogo da UF. Campos adicionais restritos ao XML 1.00 são omitidos no XML 2.00.
 O produto preferido e a alternativa reproduzem as categorias informadas para
-o GuiasGNRE. Regras de UF sem mapeamento, ST, FCP integrado, convênio obrigatório
+o GuiasGNRE. Regras de UF sem mapeamento, ST, FCP integrado obrigatório, convênio obrigatório
 e valor total obrigatório interrompem a preparação para revisão.
 O envio em produção exige os argumentos globais
 `--ambiente producao --confirmar-producao` antes de `executar` ou `enviar`.
+
+O retorno é conferido contra o pedido: principal, soma dos encargos e total,
+datas, referência e identificação dos contribuintes. Divergências ou encargos
+acrescentados pela UF deixam o lote em `em_revisao`, com o PDF em `revisao/`.
+O resumo registra os valores e `liberado_para_pagamento=false`; recibo e reserva
+da nota são preservados. A omissão da data prevista de pagamento pela UF só é
+aceita quando a validade retornada cobre a data solicitada. Homologação sempre
+mantém `liberado_para_pagamento=false`.
+
+No indicador `exigeValorFecp`, `S` significa opcional e `O`, obrigatório.
+FCP integrado obrigatório permanece bloqueado até seu mapeamento. O fluxo
+suportado usa guias próprias de DIFAL e FCP, sem somar o FCP novamente ao DIFAL.
+
+Produção também exige uma base fixa inicializada por `controle_producao_gnre.py`:
+`~/gnre-emissao/dados-gnre/producao-operacao` no host, ou
+`/dados/gnre/producao-operacao` no contêiner. Outra pasta ou conexão não pode
+substituir esse controle. A inicialização recebe os CNPJs permitidos e começa
+com a emissão bloqueada. O comando `confirmar-transicao` exige a confirmação
+explícita de que as mesmas notas não continuarão sendo emitidas no outro fluxo.
+
+O script Windows `scripts/consultar_historico_guiasgnre.ps1 -Saida PASTA_PRIVADA`
+consulta somente guias autorizadas e pendentes, usando as credenciais locais
+de `segredos/gnre.json`. O controle importa as respostas completas e seus hashes,
+ou um índice reduzido criado por `exportar-indice`, com SHA-256 conferido na
+origem. O índice contém os identificadores de bloqueio, sem nome, documento ou
+endereço do destinatário e sem as credenciais. Para importar um índice, acrescente
+`--sha256 HASH` ao comando `importar-historico --pasta ARQUIVO_DO_INDICE`.
+
+Antes de um envio de produção, o controle verifica guias externas já encontradas
+e exige consultas completas de autorizadas e pendentes com até dez minutos.
+Consulta falha ou vencida impede o envio. A verificação é repetida antes do POST;
+o histórico positivo e as reservas de produção não são apagados por ausência em
+consulta posterior ou rejeição. Esses comandos de controle não emitem guias.
+
+### Conferência e operação das guias GNRE
+
+O cliente confere os dígitos verificadores, a equivalência linha/código e o valor,
+além da representação numérica, emitente, UF/receita e datas impressas no PDF
+original. Requer `pdfinfo` e `pdftotext` (Poppler, incluído no Dockerfile GNRE).
+Falhas retêm o PDF em `revisao/`, preservando recibo e reservas. A conferência
+automática ainda não decodifica barras ópticas ou QR PIX; confirmar esses meios
+no piloto bancário. Homologação continua inválida para pagamento.
+
+`operacao_gnre.py` oferece quatro comandos sem transmissão de lotes:
+
+- `entregar --base BASE --lote-id ID --destino PASTA`: somente produção concluída,
+  conferida e dentro da validade; copia PDF, manifesto e resumo por CNPJ/data.
+  Uma entrega idêntica não é duplicada. Pagamento começa não conciliado.
+- `retomar --base BASE --identidade PEM --ambiente AMBIENTE --limite 10`: uma
+  rodada de consulta dos recibos recebidos/pendentes; respeita leases/intervalos,
+  interrompe HTTP 429 e observa `Retry-After`, sem reenviar notas.
+- `backup --base BASE --arquivo NOVO.zip`: snapshot SQLite e XMLs/resumos/PDFs
+  conhecidos, com hashes, sem certificados ou tokens. Salvar fora da base.
+- `restaurar --arquivo BACKUP.zip --destino PASTA-NOVA`: verifica integridade e
+  hashes, preserva reservas/recibos, remapeia caminhos e bloqueia produção.
+  A cópia restaurada exige conferência antes de ser adotada como base ativa.
+
+No Debian já instalado, `bash scripts/operar_gnre_debian.sh --help` usa o Python
+do host e a dependência GNRE isolada existente. Não há agendamento automático
+dessas rotinas. Backup na própria máquina não cobre perda do equipamento.
+Datas de vencimento/pagamento continuam explícitas; parâmetros de homologação
+não definem prazos de produção. Consultar o catálogo por UF/receita/ambiente
+antes de validar cada combinação em produção.
 
 ## Configuração do Bling
 
